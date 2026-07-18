@@ -1,0 +1,64 @@
+<html>
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.2/pako.min.js" integrity="sha512-IjkvjWp4tSkhkQRb9gFwCcMhBWZLPKc7Zo8ifb6qxORyehV072QgRVG3F0fwAaJh0fnEFNLc2+XggoC5wvW24g==" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.4.12/ace.js" integrity="sha512-GZ1RIgZaSc8rnco/8CXfRdCpDxRCphenIiZ2ztLy3XQfCbQUSCuk8IudvNHxkRA3oUg6q0qejgN/qqyG1duv5Q==" crossorigin="anonymous"></script>
+  <style type="text/css" media="screen">
+    html {
+      overflow-y: hidden;
+    }
+    body {
+      height: 100%;
+    }
+    #error {
+      color: red;
+      display: inline;
+      display: none;
+      padding-left: 10px;
+    }
+    #editor {
+      height: 100%;
+      width: 100%;
+    }
+    section {
+      display: flex;
+      flex-direction: column;
+      height: 98%;
+    }
+    #loading {
+      display: none;
+      padding-left: 10px;
+    }
+    #info {
+      float: right;
+    }
+  </style>
+  <script src="main.js"></script>
+</head>
+<body>
+  <section>
+    <div>
+      <input type="file" id="file" onchange="Update()">
+      <div id="info">
+        Source code:
+        <a href="https://github.com/mircodezorzi/pka2xml/blob/master/lambda/main.cpp" target="_blank">backend</a>
+        <a href="https://github.com/mircodezorzi/pka2xml/blob/master/docs/main.js" target="_blank">frontend</a>
+      </div>
+      <hr>
+      <button disabled id="encode" onclick="Encode()">Encode</button>
+      <button disabled id="decode" onclick="Decode()">Decode</button>
+      <button disabled id="retrofit" onclick="Retrofit()">Retrofit</button>
+      <p id="loading">Loading...</p>
+      <p id="error">Error!</p>
+      <hr>
+    </div>
+    <div id="editor"></div>
+  </section>
+  <script>
+    var editor = ace.edit("editor");
+    editor.setTheme("ace/theme/chrome");
+    editor.session.setMode("ace/mode/xml");
+    editor.setOption("showPrintMargin", false)
+    document.getElementById('editor').style.fontSize='15px';
+  </script>
+</body>
+</html>
