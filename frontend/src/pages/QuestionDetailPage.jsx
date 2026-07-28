@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
 
@@ -10,13 +10,57 @@ export default function QuestionDetailPage() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Editable question fields
+  const [editForm, setEditForm] = useState({
+    title: '', question_text: '', week_number: 1,
+    semester: '', academic_year: '', is_active: true,
+  });
+  const [savingQuestion, setSavingQuestion] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
 
   const load = async () => {
     const q = await api.getQuestion(id);
     setQuestion(q);
+    setEditForm({
+      title: q.title || '',
+      question_text: q.question_text || '',
+      week_number: q.week_number || 1,
+      semester: q.semester || '',
+      academic_year: q.academic_year || '',
+      is_active: q.is_active ?? true,
+    });
+    setHasChanges(false);
     if (q.evaluation_plan) setPlanJson(JSON.stringify(q.evaluation_plan, null, 2));
   };
   useEffect(() => { load(); }, [id]);
+
+  const handleFieldChange = useCallback((field, value) => {
+    setEditForm(prev => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+    setSuccess('');
+  }, []);
+
+  const handleSaveQuestion = async () => {
+    setSavingQuestion(true); setError(''); setSuccess('');
+    try {
+      const q = await api.updateQuestion(id, editForm);
+      setQuestion(q);
+      setHasChanges(false);
+      setSuccess('Question updated successfully!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) { setError(err.message); }
+    finally { setSavingQuestion(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this question? This cannot be undone.')) return;
+    try {
+      await api.deleteQuestion(id);
+      navigate('/questions');
+    } catch (err) { setError(err.message); }
+  };
 
   const handleGenerate = async () => {
     setGenerating(true); setError('');
@@ -34,6 +78,8 @@ export default function QuestionDetailPage() {
       const plan = JSON.parse(planJson);
       const q = await api.updatePlan(id, plan);
       setQuestion(q);
+      setSuccess('Evaluation plan saved!');
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) { setError(err.message === 'Unexpected token' ? 'Invalid JSON' : err.message); }
     finally { setSaving(false); }
   };
@@ -44,20 +90,113 @@ export default function QuestionDetailPage() {
 
   return (
     <>
+      {/* Header */}
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
           <button className="btn btn-sm btn-secondary" onClick={() => navigate('/questions')}>← Back</button>
           <span className="badge badge-topic">W{question.week_number}</span>
           {plan ? <span className="badge badge-pass">Plan Ready</span> : <span className="badge badge-pending">No Plan</span>}
+          {hasChanges && <span className="badge" style={{ background: '#F59E0B', color: 'white' }}>Unsaved Changes</span>}
         </div>
         <h2>{question.title}</h2>
       </div>
 
+      {/* Alerts */}
+      {error && <div style={{
+        background: '#FEE2E2', color: '#991B1B', padding: '10px 16px', borderRadius: 10,
+        fontSize: 14, marginBottom: 16, border: '1px solid #FECACA',
+      }}>⚠️ {error}</div>}
+      {success && <div style={{
+        background: '#D1FAE5', color: '#065F46', padding: '10px 16px', borderRadius: 10,
+        fontSize: 14, marginBottom: 16, border: '1px solid #A7F3D0',
+      }}>✅ {success}</div>}
+
+      {/* Editable Question Details */}
       <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 8 }}>📝 Question Text</h3>
-        <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.7 }}>{question.question_text}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ fontSize: 15, color: 'var(--text-secondary)', margin: 0 }}>📝 Question Details</h3>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={handleDelete}
+              style={{ opacity: 0.8 }}
+            >🗑 Delete</button>
+            <button
+              className={`btn btn-sm ${hasChanges ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={handleSaveQuestion}
+              disabled={savingQuestion || !hasChanges}
+              style={{ minWidth: 120 }}
+            >
+              {savingQuestion ? '⏳ Saving...' : hasChanges ? '💾 Save Changes' : '✓ Saved'}
+            </button>
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 14 }}>
+          <label className="form-label">Title</label>
+          <input
+            className="form-input"
+            value={editForm.title}
+            onChange={e => handleFieldChange('title', e.target.value)}
+            placeholder="Question title..."
+          />
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 14 }}>
+          <label className="form-label">Question Text</label>
+          <textarea
+            className="form-textarea"
+            value={editForm.question_text}
+            onChange={e => handleFieldChange('question_text', e.target.value)}
+            placeholder="Full lab instructions..."
+            style={{ minHeight: 200, fontFamily: 'inherit', fontSize: 14, lineHeight: 1.7 }}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+          <div className="form-group">
+            <label className="form-label">Week</label>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              value={editForm.week_number}
+              onChange={e => handleFieldChange('week_number', parseInt(e.target.value) || 1)}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Semester</label>
+            <input
+              className="form-input"
+              value={editForm.semester}
+              onChange={e => handleFieldChange('semester', e.target.value)}
+              placeholder="Fall 2026"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Academic Year</label>
+            <input
+              className="form-input"
+              value={editForm.academic_year}
+              onChange={e => handleFieldChange('academic_year', e.target.value)}
+              placeholder="2025-2026"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Status</label>
+            <select
+              className="form-select"
+              value={editForm.is_active ? 'true' : 'false'}
+              onChange={e => handleFieldChange('is_active', e.target.value === 'true')}
+            >
+              <option value="true">✅ Active</option>
+              <option value="false">❌ Inactive</option>
+            </select>
+          </div>
+        </div>
       </div>
 
+      {/* Evaluation Plan */}
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h3 style={{ fontSize: 15 }}>🤖 Evaluation Plan</h3>
@@ -72,8 +211,6 @@ export default function QuestionDetailPage() {
             )}
           </div>
         </div>
-
-        {error && <p style={{ color: 'var(--danger)', fontSize: 14, marginBottom: 12 }}>{error}</p>}
 
         {plan && (
           <div style={{ marginBottom: 16 }}>

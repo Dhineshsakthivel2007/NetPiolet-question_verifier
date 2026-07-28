@@ -12,6 +12,7 @@ import ResultDetailPage from './pages/ResultDetailPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
 import StudentTestPage from './pages/StudentTestPage.jsx';
 import StudentResultsPage from './pages/StudentResultsPage.jsx';
+import LabPage from './pages/LabPage.jsx';
 
 function ProtectedRoute({ children, allowedRoles }) {
   const token = localStorage.getItem('token');
@@ -61,6 +62,9 @@ export default function App() {
           <Route index element={<StudentTestPage />} />
           <Route path="results" element={<StudentResultsPage />} />
         </Route>
+
+        {/* Lab Page — fullscreen, outside layout wrapper */}
+        <Route path="/student/lab/:projectId" element={<ProtectedRoute allowedRoles={['student']}><LabPage /></ProtectedRoute>} />
 
         {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/login" replace />} />

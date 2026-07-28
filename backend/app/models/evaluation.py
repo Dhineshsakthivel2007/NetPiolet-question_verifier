@@ -18,10 +18,13 @@ class Evaluation(TimestampMixin, Base):
     evaluation_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     results: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     overall_score: Mapped[float] = mapped_column(Float, default=0.0)
+    max_score: Mapped[float] = mapped_column(Float, default=100.0)
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
 
     question = relationship("Question", back_populates="evaluations")
     report = relationship("Report", back_populates="evaluation", uselist=False)
+    project = relationship("Project")

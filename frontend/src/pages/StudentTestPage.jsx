@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
 
 const EXAM_RULES = [
@@ -11,6 +12,7 @@ const EXAM_RULES = [
 ];
 
 export default function StudentTestPage() {
+  const navigate = useNavigate();
   const [phase, setPhase] = useState('rules');
   const [checkedRules, setCheckedRules] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -40,20 +42,8 @@ export default function StudentTestPage() {
       if (!questions?.length) { setError('No tests available. Contact your professor.'); setLoading(false); return; }
       const q = questions[0];
       setQuestion(q);
-      const sess = await api.startTest(q.id);
-      setSession(sess); setResult(null); setFile(null); setFileName('');
-
-      // Timer
-      let expMs;
-      if (sess.expires_at) {
-        const s = String(sess.expires_at);
-        expMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-      } else { expMs = Date.now() + 3600000; }
-      if (timerRef.current) clearInterval(timerRef.current);
-      const tick = () => { setTimeLeft(Math.max(0, Math.floor((expMs - Date.now()) / 1000))); };
-      tick();
-      timerRef.current = setInterval(tick, 1000);
-      setPhase('test');
+      const proj = await api.createProject(q.id);
+      navigate(`/student/lab/${proj.id}`);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -95,6 +85,13 @@ export default function StudentTestPage() {
     if (question?.question_text) {
       navigator.clipboard.writeText(question.question_text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
     }
+  };
+
+  const finishAndLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('username');
+    navigate('/login');
   };
 
   const resetAll = () => {
@@ -163,8 +160,7 @@ export default function StudentTestPage() {
                 <textarea className="form-textarea" rows={3} placeholder="Any suggestions..." value={feedback.comment}
                   onChange={e => setFeedback(f => ({...f, comment: e.target.value}))} style={{ minHeight: 70, fontSize: 14 }} />
               </div>
-              <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={() => { setFeedbackDone(true); setTimeout(resetAll, 2500); }}>Submit Feedback</button>
-              <button className="btn btn-secondary" style={{ width: '100%', marginTop: 10 }} onClick={resetAll}>Skip</button>
+              <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={() => { setFeedbackDone(true); setTimeout(finishAndLogout, 1500); }}>Submit Feedback</button>
             </>
           )}
         </div>

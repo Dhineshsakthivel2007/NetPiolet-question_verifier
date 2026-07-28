@@ -102,6 +102,7 @@ def get_evaluations(
     student_id: str | None = None,
     passed: bool | None = None,
     created_by: str | None = None,
+    latest_only: bool = False,
 ) -> list[Evaluation]:
     query = db.query(Evaluation)
     if question_id:
@@ -112,7 +113,19 @@ def get_evaluations(
         query = query.filter(Evaluation.passed == passed)
     if created_by:
         query = query.filter(Evaluation.created_by == created_by)
-    return query.order_by(Evaluation.created_at.desc()).all()
+    evals = query.order_by(Evaluation.created_at.desc()).all()
+
+    if latest_only:
+        seen = set()
+        deduped = []
+        for ev in evals:
+            key = (ev.student_id or ev.student_name or ev.created_by or "anon", ev.question_id)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(ev)
+        return deduped
+
+    return evals
 
 
 def get_evaluation(db: Session, evaluation_id: str) -> Evaluation | None:

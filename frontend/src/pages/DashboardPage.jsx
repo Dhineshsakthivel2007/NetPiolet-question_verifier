@@ -39,17 +39,35 @@ export default function DashboardPage() {
     Promise.all([
       api.getTopics().catch(() => []),
       api.getQuestions().catch(() => []),
-      api.getEvaluations().catch(() => ({ items: [], total: 0 })),
+      api.getEvaluations({ latest_only: true }).catch(() => ({ items: [], total: 0 })),
       api.health().catch(() => null),
     ]).then(([topics, questions, evaluations, h]) => {
-      const evals = evaluations.items || [];
+      const rawEvals = evaluations.items || [];
+
+      // Deduplicate: Keep only the latest submission per candidate per question
+      const latestMap = new Map();
+      rawEvals.forEach(e => {
+        const key = `${e.student_id || e.student_name || e.created_by || 'anon'}_${e.question_id}`;
+        if (!latestMap.has(key)) {
+          latestMap.set(key, e);
+        } else {
+          const existing = latestMap.get(key);
+          const timeExisting = new Date(existing.evaluated_at || existing.created_at || 0).getTime();
+          const timeCurrent = new Date(e.evaluated_at || e.created_at || 0).getTime();
+          if (timeCurrent > timeExisting) {
+            latestMap.set(key, e);
+          }
+        }
+      });
+      const finalEvals = Array.from(latestMap.values());
+
       setStats({
         topics: topics.length,
         questions: questions.length,
-        evaluations: evals.length,
-        passed: evals.filter(e => e.passed).length,
+        evaluations: finalEvals.length,
+        passed: finalEvals.filter(e => e.passed).length,
       });
-      setRecentEvals(evals.slice(0, 5));
+      setRecentEvals(finalEvals.slice(0, 5));
       setHealth(h);
     });
   }, []);

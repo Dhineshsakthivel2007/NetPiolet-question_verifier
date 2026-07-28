@@ -16,6 +16,7 @@ class Question(TimestampMixin, Base):
     semester: Mapped[str] = mapped_column(String(50), default="")
     academic_year: Mapped[str] = mapped_column(String(20), default="")
     evaluation_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    starter_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     time_limit_minutes: Mapped[int] = mapped_column(Integer, default=0)

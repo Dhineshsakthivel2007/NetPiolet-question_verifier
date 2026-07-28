@@ -73,6 +73,13 @@ export const api = {
   getTestSession: (sessionId) => request(`/student/test/${sessionId}`),
   getStudentResults: () => request('/student/results'),
 
+  // Projects
+  createProject: (questionId) => request('/projects', { method: 'POST', body: JSON.stringify({ question_id: questionId }) }),
+  getProjects: () => request('/projects'),
+  getProject: (id) => request(`/projects/${id}`),
+  saveProject: (id, state) => request(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify({ state }) }),
+  submitProject: (id) => request(`/projects/${id}/submit`, { method: 'POST' }),
+
   // Reports
   getReport: (evalId) => request(`/reports/${evalId}`),
   getReportPdfUrl: (evalId) => `${API_BASE}/reports/${evalId}/pdf`,

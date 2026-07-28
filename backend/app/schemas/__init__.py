@@ -81,11 +81,11 @@ class PlanUpdateRequest(BaseModel):
 # --- Evaluation ---
 class EvaluationResponse(BaseModel):
     id: str; question_id: str; student_name: str; student_id: str
-    pkt_file_path: str; xml_file_path: str
-    evaluation_plan: dict | None = None; results: dict | None = None
-    overall_score: float; passed: bool; evaluated_at: datetime
+    pkt_file_path: str | None = None; xml_file_path: str | None = None
+    evaluation_plan: dict | None = None; results: list | dict | None = None
+    overall_score: float; max_score: float = 100.0; passed: bool; evaluated_at: datetime | None = None
     created_by: str | None = None; attempt_number: int = 1
-    created_at: datetime
+    created_at: datetime | None = None
     model_config = {"from_attributes": True}
 
 class EvaluationListResponse(BaseModel):

@@ -15,6 +15,9 @@ def _slugify(text: str) -> str:
 
 
 def create_topic(db: Session, data: TopicCreate) -> Topic:
+    existing = db.query(Topic).filter(Topic.name == data.name).first()
+    if existing:
+        return existing  # Return the existing topic instead of crashing
     topic = Topic(name=data.name, slug=_slugify(data.name), description=data.description)
     db.add(topic); db.commit(); db.refresh(topic)
     return topic
