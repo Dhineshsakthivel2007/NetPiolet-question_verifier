@@ -12,13 +12,9 @@ export default function LoginPage() {
     localStorage.removeItem('username');
   }, []);
 
-  const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('student');
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const googleBtnRef = useRef(null);
@@ -61,19 +57,13 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setSuccess(''); setLoading(true);
+    setError(''); setLoading(true);
     try {
-      if (isRegister) {
-        const res = await api.register(username, email, password, role);
-        setSuccess(res.message || 'Account created! Wait for admin approval.');
-        setIsRegister(false);
-      } else {
-        const { access_token, role: userRole, username: uname } = await api.login(username, password);
-        localStorage.setItem('token', access_token);
-        localStorage.setItem('role', userRole);
-        localStorage.setItem('username', uname);
-        navigate(userRole === 'student' ? '/student' : '/');
-      }
+      const { access_token, role: userRole, username: uname } = await api.login(username, password);
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('role', userRole);
+      localStorage.setItem('username', uname);
+      navigate(userRole === 'student' ? '/student' : '/');
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -88,39 +78,18 @@ export default function LoginPage() {
             <p className="subtitle">AI-Powered Cisco Lab Evaluation</p>
           </div>
 
-          {success && (
-            <div style={{ background: 'var(--success-bg)', border: '1px solid var(--success)', borderRadius: 'var(--radius-md)', padding: '12px 16px', marginBottom: 20, color: 'var(--success)', fontSize: 14, textAlign: 'center' }}>
-              ✓ {success}
-            </div>
-          )}
-
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label className="form-label">Username</label>
               <input className="form-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter username" required />
             </div>
-            {isRegister && (
-              <>
-                <div className="form-group">
-                  <label className="form-label">Email (@bitsathy.ac.in)</label>
-                  <input className="form-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="yourname@bitsathy.ac.in" required />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Role</label>
-                  <select className="form-select" value={role} onChange={e => setRole(e.target.value)}>
-                    <option value="student">Student</option>
-                    <option value="professor">Professor</option>
-                  </select>
-                </div>
-              </>
-            )}
             <div className="form-group">
               <label className="form-label">Password</label>
               <input className="form-input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" required />
             </div>
             {error && <p style={{ color: 'var(--danger)', fontSize: 14, marginBottom: 16, textAlign: 'center' }}>{error}</p>}
             <button className="btn btn-primary btn-lg" style={{ width: '100%' }} disabled={loading}>
-              {loading ? '⏳ Please wait...' : isRegister ? '🚀 Create Account' : '🔐 Sign In'}
+              {loading ? '⏳ Please wait...' : '🔐 Sign In'}
             </button>
           </form>
 
@@ -137,11 +106,8 @@ export default function LoginPage() {
             </button>
           )}
 
-          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-secondary)' }}>
-            {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
-            <a href="#" onClick={(e) => { e.preventDefault(); setIsRegister(!isRegister); setError(''); setSuccess(''); }}>
-              {isRegister ? 'Sign In' : 'Register'}
-            </a>
+          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--text-muted)' }}>
+            Contact your administrator to get an account
           </p>
         </div>
       </div>

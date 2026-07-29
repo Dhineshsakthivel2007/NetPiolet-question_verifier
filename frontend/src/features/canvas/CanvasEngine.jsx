@@ -2,10 +2,11 @@ import { useCallback, useRef } from 'react';
 import { ReactFlow, MiniMap, Controls, Background, ConnectionMode } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import DeviceNode from '../devices/DeviceNode.jsx';
+import TextNoteNode from '../devices/TextNoteNode.jsx';
 import CableEdge from './CableEdge.jsx';
 import useProjectStore from '../../store/projectStore.js';
 
-const nodeTypes = { device: DeviceNode };
+const nodeTypes = { device: DeviceNode, note: TextNoteNode };
 const edgeTypes = { cable: CableEdge };
 
 export default function CanvasEngine() {

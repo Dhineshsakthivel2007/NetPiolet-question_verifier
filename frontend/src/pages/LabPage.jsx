@@ -63,7 +63,14 @@ export default function LabPage() {
     }
   };
 
+  const [feedbackError, setFeedbackError] = useState('');
+
   const handleFeedbackSubmit = async () => {
+    if (!feedback.rating || !feedback.difficulty) {
+      setFeedbackError('⚠️ Please select both a star rating and difficulty level to submit feedback.');
+      return;
+    }
+    setFeedbackError('');
     try {
       await finishProject();
     } catch (err) {
@@ -73,10 +80,17 @@ export default function LabPage() {
     setTimeout(() => {
       useProjectStore.setState({ submitResult: null });
       setShowFeedback(false);
-      localStorage.removeItem('token');
-      localStorage.removeItem('role');
-      localStorage.removeItem('username');
-      navigate('/login');
+      const role = localStorage.getItem('role');
+      if (role === 'admin') {
+        navigate('/results');
+      } else if (role === 'professor') {
+        navigate('/questions');
+      } else {
+        localStorage.removeItem('token');
+        localStorage.removeItem('role');
+        localStorage.removeItem('username');
+        navigate('/login');
+      }
     }, 1200);
   };
 
@@ -167,6 +181,7 @@ export default function LabPage() {
                       <textarea className="form-textarea" rows={3} placeholder="Any suggestions..." value={feedback.comment}
                         onChange={e => setFeedback(f => ({ ...f, comment: e.target.value }))} style={{ minHeight: 70, fontSize: 14 }} />
                     </div>
+                    {feedbackError && <p style={{ color: '#EF4444', fontSize: 13, fontWeight: 600, marginBottom: 14, textAlign: 'center' }}>{feedbackError}</p>}
                     <button className="btn btn-primary btn-lg" style={{ width: '100%', fontSize: 15 }} onClick={handleFeedbackSubmit}>
                       Submit Feedback & Exit
                     </button>

@@ -109,14 +109,18 @@ def resolve_roles(network: ParsedNetwork) -> DeviceRoleMap:
     pcs = network.pcs
     servers = network.get_devices_by_type("Server")
 
+    # Detect if any device hostname ends with '0' (indicating zero-indexed naming convention)
+    has_zero_indexed = any(
+        d.name.lower().endswith("0") or d.name.lower().endswith("-0")
+        for d in network.devices
+    )
+
     # --- Positional roles (always assigned) ---
     for i, r in enumerate(routers, 1):
         role_map.add(f"router_{i}", r.name)
-        # Also add hostname from running config as a role
         hostname = r.running_config.hostname
         if hostname and hostname.lower() != r.name.lower():
             role_map.add(hostname.lower(), r.name)
-        # Add the actual name as a role too (for backward compat)
         role_map.add(r.name.lower(), r.name)
 
     for i, s in enumerate(switches, 1):
@@ -142,13 +146,11 @@ def resolve_roles(network: ParsedNetwork) -> DeviceRoleMap:
             role_map.add("gateway_router", r.name)
             edge_assigned = True
         elif _has_routing_protocol(r):
-            # Could be branch or internal router
             if not role_map.resolve("branch_router"):
                 role_map.add("branch_router", r.name)
             elif not role_map.resolve("internal_router"):
                 role_map.add("internal_router", r.name)
 
-    # If no edge router found, first router is main_router
     if not edge_assigned and routers:
         role_map.add("main_router", routers[0].name)
 
@@ -164,36 +166,36 @@ def resolve_roles(network: ParsedNetwork) -> DeviceRoleMap:
             if not role_map.resolve("access_switch"):
                 role_map.add("access_switch", s.name)
 
-    # If no core switch found, first switch is main
     if not core_assigned and switches:
         role_map.add("main_switch", switches[0].name)
 
-    # --- Common aliases (1-indexed) ---
-    # R1, R2, R3... aliases
-    for i, r in enumerate(routers, 1):
-        role_map.add(f"r{i}", r.name)
-
-    # SW1, SW2, SW3... aliases
-    for i, s in enumerate(switches, 1):
-        role_map.add(f"sw{i}", s.name)
-        role_map.add(f"s{i}", s.name)
-
-    # --- Zero-indexed aliases (used by AI-generated plans) ---
-    # R0, Router0, SW0, Switch0, PC0, Server0
-    for i, r in enumerate(routers):
-        role_map.add(f"r{i}", r.name) if f"r{i}" not in role_map.role_to_device else None
-        role_map.add(f"router{i}", r.name)
-
-    for i, s in enumerate(switches):
-        role_map.add(f"sw{i}", s.name) if f"sw{i}" not in role_map.role_to_device else None
-        role_map.add(f"switch{i}", s.name)
-        role_map.add(f"s{i}", s.name) if f"s{i}" not in role_map.role_to_device else None
-
-    for i, p in enumerate(pcs):
-        role_map.add(f"pc{i}", p.name)
-
-    for i, s in enumerate(servers):
-        role_map.add(f"server{i}", s.name)
+    # --- Alias mapping based on convention ---
+    if has_zero_indexed:
+        # Zero-indexed naming (r0 -> routers[0], r1 -> routers[1], router0 -> routers[0])
+        for i, r in enumerate(routers):
+            role_map.add(f"r{i}", r.name)
+            role_map.add(f"router{i}", r.name)
+        for i, s in enumerate(switches):
+            role_map.add(f"sw{i}", s.name)
+            role_map.add(f"s{i}", s.name)
+            role_map.add(f"switch{i}", s.name)
+        for i, p in enumerate(pcs):
+            role_map.add(f"pc{i}", p.name)
+        for i, s in enumerate(servers):
+            role_map.add(f"server{i}", s.name)
+    else:
+        # One-indexed naming (r1 -> routers[0], r2 -> routers[1], router1 -> routers[0])
+        for i, r in enumerate(routers, 1):
+            role_map.add(f"r{i}", r.name)
+            role_map.add(f"router{i}", r.name)
+        for i, s in enumerate(switches, 1):
+            role_map.add(f"sw{i}", s.name)
+            role_map.add(f"s{i}", s.name)
+            role_map.add(f"switch{i}", s.name)
+        for i, p in enumerate(pcs, 1):
+            role_map.add(f"pc{i}", p.name)
+        for i, s in enumerate(servers, 1):
+            role_map.add(f"server{i}", s.name)
 
     logger.info("Resolved %d device roles: %s", len(role_map.role_to_device), role_map.to_dict())
     return role_map
@@ -228,41 +230,47 @@ def resolve_device_param(
 
     # Case 2: device name specified
     if device_name:
-        # Direct match
-        if network.get_device_by_name(device_name):
-            return device_name, None
-
-        # Try as a role (case-insensitive)
-        resolved = role_map.resolve(device_name.lower())
-        if resolved:
-            return resolved, None
-
         # Case-insensitive exact match against all device names
         name_lower = device_name.lower().strip()
         for d in network.devices:
             if d.name.lower() == name_lower:
                 return d.name, None
 
-        # Fuzzy: "R1" → first router, "SW1" → first switch
+        # Try as a role (case-insensitive)
+        resolved = role_map.resolve(name_lower)
+        if resolved:
+            return resolved, None
+
+        # Check if zero-indexed naming is used in network
+        has_zero_indexed = any(
+            d.name.lower().endswith("0") or d.name.lower().endswith("-0")
+            for d in network.devices
+        )
+
+        # Fuzzy: "R0" -> routers[0], "R1" -> routers[1] (if zero-indexed) else R1 -> routers[0] (if 1-indexed)
         if name_lower.startswith("r") and name_lower[1:].isdigit():
             idx = int(name_lower[1:])
             routers = network.routers
-            # Support zero-indexed (R0 → first router) and one-indexed (R1 → first router)
-            if idx == 0 and routers:
-                return routers[0].name, None
-            if 0 < idx <= len(routers):
-                return routers[idx - 1].name, None
+            if routers:
+                if has_zero_indexed or idx == 0:
+                    if 0 <= idx < len(routers):
+                        return routers[idx].name, None
+                else:
+                    if 0 < idx <= len(routers):
+                        return routers[idx - 1].name, None
 
         if name_lower.startswith(("sw", "s")) and any(c.isdigit() for c in name_lower):
             digits = "".join(c for c in name_lower if c.isdigit())
             if digits:
                 idx = int(digits)
                 switches = network.switches
-                # Support zero-indexed (SW0 → first switch) and one-indexed (SW1 → first switch)
-                if idx == 0 and switches:
-                    return switches[0].name, None
-                if 0 < idx <= len(switches):
-                    return switches[idx - 1].name, None
+                if switches:
+                    if has_zero_indexed or idx == 0:
+                        if 0 <= idx < len(switches):
+                            return switches[idx].name, None
+                    else:
+                        if 0 < idx <= len(switches):
+                            return switches[idx - 1].name, None
 
         # Pattern match: "Switch0" → first switch, "Router0" → first router, "PC0" → first pc
         import re
@@ -280,11 +288,14 @@ def resolve_device_param(
                 devs = network.get_devices_by_type("Server")
             else:
                 devs = []
-            if dev_idx < len(devs):
-                return devs[dev_idx].name, None
-            # Try 1-indexed too
-            if 0 < dev_idx <= len(devs):
-                return devs[dev_idx - 1].name, None
+
+            if devs:
+                if has_zero_indexed or dev_idx == 0:
+                    if 0 <= dev_idx < len(devs):
+                        return devs[dev_idx].name, None
+                else:
+                    if 0 < dev_idx <= len(devs):
+                        return devs[dev_idx - 1].name, None
 
         # List available devices
         available = [d.name for d in network.devices]

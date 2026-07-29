@@ -1,7 +1,8 @@
 """Auth API routes — login, register, Google OAuth, admin user management."""
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -168,3 +169,122 @@ def delete_user(user_id: str, db: Session = Depends(get_db), admin: User = Depen
     db.delete(user)
     db.commit()
     return {"message": "User deleted"}
+
+
+# ---- Admin: Create Single User (auto-activated) ----
+
+class AdminUserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: str = "student"
+
+
+
+
+@router.post("/users/create", status_code=status.HTTP_201_CREATED)
+def admin_create_user(data: AdminUserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Admin creates a user — account is immediately active."""
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(status_code=400, detail="Username already taken")
+    if db.query(User).filter(User.email == data.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    try:
+        role = UserRole(data.role)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid role. Must be: admin, professor, student")
+
+    user = User(
+        username=data.username,
+        email=data.email,
+        hashed_password=auth_service.hash_password(data.password),
+        role=role,
+        is_active=True,  # Admin-created users are immediately active
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"message": f"User '{data.username}' created and activated.", "user_id": user.id}
+
+
+# ---- Admin: Bulk Upload Users from Excel ----
+
+
+
+@router.post("/users/bulk-upload")
+def admin_bulk_upload_users(
+    file: UploadFile = File(...),
+    role: str = Form("student"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Upload an Excel (.xlsx/.xls) or CSV file to create users in bulk.
+
+    Expected columns: username, email, password
+    The selected role is assigned to all imported users.
+    All uploaded users are set to active immediately.
+    """
+    import io
+    filename = file.filename or ""
+
+    try:
+        target_role = UserRole(role)
+    except ValueError:
+        target_role = UserRole.student
+
+    try:
+        raw = file.file.read()
+    except Exception:
+        raise HTTPException(400, "Could not read uploaded file")
+
+    rows = []
+    if filename.endswith(".csv"):
+        import csv
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        for row in reader:
+            rows.append({k.strip().lower(): v.strip() for k, v in row.items() if k})
+    else:
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise HTTPException(500, "openpyxl not installed on server")
+        wb = load_workbook(io.BytesIO(raw), read_only=True)
+        ws = wb.active
+        headers = [str(cell.value or "").strip().lower() for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            d = {headers[i]: str(row[i] or "").strip() for i in range(min(len(headers), len(row)))}
+            if d.get("username"):
+                rows.append(d)
+
+    created = 0
+    skipped = 0
+    for row in rows:
+        uname = row.get("username", "").strip()
+        email = row.get("email", "").strip()
+        pwd = row.get("password", "").strip()
+
+        if not uname or not email:
+            skipped += 1
+            continue
+
+        # Skip duplicates
+        if db.query(User).filter((User.username == uname) | (User.email == email)).first():
+            skipped += 1
+            continue
+
+        hashed_pwd = auth_service.hash_password(pwd) if pwd else ""
+
+        user = User(
+            username=uname,
+            email=email,
+            hashed_password=hashed_pwd,
+            role=target_role,
+            is_active=True,
+        )
+        db.add(user)
+        created += 1
+
+    db.commit()
+    return {"message": f"{created} users created, {skipped} skipped", "created": created, "skipped": skipped}
+

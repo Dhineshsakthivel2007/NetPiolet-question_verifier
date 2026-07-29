@@ -823,4 +823,159 @@ function buildRouteTable(device) {
   return routes || '% No static routes configured';
 }
 
+// ═══════ AUTOCOMPLETION ENGINE ═══════
+
+// ═══════ AUTOCOMPLETION ENGINE ═══════
+
+const MODE_COMMAND_TEMPLATES = {
+  pc_exec: [
+    'ipconfig', 'ipconfig /all', 'ping', 'tracert', 'exit'
+  ],
+  user_exec: [
+    'enable', 'exit', 'show', 'show ip', 'show ip interface', 'show ip interface brief',
+    'show ip route', 'show ip ospf', 'show vlan', 'show vlan brief',
+    'show running-config', 'show interfaces', 'show version',
+    'show mac-address-table', 'show cdp neighbors', 'show lldp'
+  ],
+  priv_exec: [
+    'configure', 'configure terminal', 'disable', 'exit', 'copy',
+    'copy running-config startup-config', 'write', 'write memory',
+    'show', 'show ip', 'show ip interface', 'show ip interface brief',
+    'show ip route', 'show ip ospf', 'show vlan', 'show vlan brief',
+    'show running-config', 'show interfaces', 'show version',
+    'show mac-address-table', 'show cdp neighbors', 'show lldp',
+    'clear mac-address-table'
+  ],
+  global_config: [
+    'hostname', 'enable', 'enable secret', 'enable password',
+    'interface', 'vlan', 'router', 'router ospf', 'router rip', 'router eigrp',
+    'ip', 'ip route', 'ip default-gateway', 'ip dhcp', 'ip dhcp pool',
+    'ip dhcp excluded-address', 'ip domain-name', 'ip domain-lookup',
+    'ip name-server', 'ip ftp username', 'ip ftp password',
+    'ip nat', 'ip nat inside', 'ip nat outside', 'ip nat inside source static',
+    'lldp', 'lldp run', 'lldp enable', 'no lldp run',
+    'spanning-tree', 'spanning-tree mode rapid-pvst', 'spanning-tree mode pvst',
+    'spanning-tree vlan 1 root primary', 'spanning-tree portfast bpduguard default',
+    'service', 'service password-encryption', 'banner', 'banner motd',
+    'line', 'line console 0', 'line vty 0 4', 'end', 'exit'
+  ],
+  interface_config: [
+    'ip', 'ip address', 'ip helper-address', 'ip nat inside', 'ip nat outside',
+    'no', 'no shutdown', 'no switchport', 'shutdown',
+    'description', 'encapsulation', 'encapsulation dot1Q',
+    'switchport', 'switchport mode', 'switchport mode access',
+    'switchport mode trunk', 'switchport access vlan', 'switchport trunk allowed vlan',
+    'switchport trunk native vlan',
+    'spanning-tree', 'spanning-tree portfast', 'spanning-tree bpduguard enable',
+    'bpduguard', 'lldp', 'lldp transmit', 'lldp receive',
+    'duplex', 'duplex auto', 'duplex full', 'duplex half',
+    'speed', 'speed auto', 'speed 100', 'clock', 'clock rate', 'end', 'exit'
+  ],
+  vlan_config: [
+    'name', 'state', 'state active', 'state suspend', 'end', 'exit'
+  ],
+  router_config: [
+    'network', 'area', 'passive-interface', 'default-information originate',
+    'no', 'no auto-summary', 'auto-summary', 'version', 'version 2', 'end', 'exit'
+  ],
+  line_config: [
+    'password', 'login', 'transport input ssh', 'transport input all', 'end', 'exit'
+  ]
+};
+
+export function autocompleteCommand(rawLine, context) {
+  if (!context) return { completedLine: rawLine, addition: '', matches: [] };
+  const mode = context.mode || 'user_exec';
+  let templates = [...(MODE_COMMAND_TEMPLATES[mode] || [])];
+
+  // Dynamically add interface names if device interfaces are available in global_config
+  if (mode === 'global_config' && context.device?.interfaces) {
+    for (const ifaceName of Object.keys(context.device.interfaces)) {
+      templates.push(`interface ${ifaceName}`);
+    }
+  }
+
+  const isTrailingSpace = rawLine.endsWith(' ');
+  const tokens = rawLine.trim().split(/\s+/).filter(Boolean);
+
+  // STRICT REQUIREMENT: Autocomplete works ONLY if candidate typed at least 1 letter!
+  if (tokens.length === 0) {
+    return { completedLine: rawLine, addition: '', matches: [] };
+  }
+
+  const lastToken = isTrailingSpace ? '' : tokens[tokens.length - 1];
+
+  // If candidate has not typed the first letter of the current token, return empty
+  if (!isTrailingSpace && (!lastToken || lastToken.length < 1)) {
+    return { completedLine: rawLine, addition: '', matches: [] };
+  }
+
+  let prefixSoFar = '';
+  let matchingTemplates = templates;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i].toLowerCase();
+    const isLastToken = i === tokens.length - 1 && !isTrailingSpace;
+
+    if (!isLastToken) {
+      const availableNextWords = matchingTemplates
+        .map(t => t.split(' ')[i]?.toLowerCase())
+        .filter(Boolean);
+
+      const exactOrPrefix = availableNextWords.filter(w => w === token || w.startsWith(token));
+      const chosen = exactOrPrefix[0] || token;
+
+      let expanded = chosen;
+      if (chosen === 'int') expanded = 'interface';
+      if (chosen === 'sh') expanded = 'show';
+      if (chosen === 'conf') expanded = 'configure';
+      if (chosen === 't' && tokens[i - 1]?.toLowerCase() === 'configure') expanded = 'terminal';
+      if (chosen === 'br' && tokens[i - 1]?.toLowerCase() === 'interface') expanded = 'brief';
+      if (chosen === 'fa' || chosen === 'gi' || chosen === 's') expanded = normalizeInterface(chosen);
+
+      prefixSoFar += (prefixSoFar ? ' ' : '') + expanded;
+      matchingTemplates = matchingTemplates.filter(t => t.toLowerCase().startsWith(prefixSoFar.toLowerCase()));
+    } else {
+      const wordIndex = i;
+      const candidateWords = matchingTemplates
+        .map(t => t.split(' ')[wordIndex])
+        .filter(Boolean);
+
+      const matches = [...new Set(candidateWords.filter(w => w.toLowerCase().startsWith(token.toLowerCase())))];
+
+      if (matches.length === 1) {
+        const fullWord = matches[0];
+        const addition = fullWord.slice(token.length) + ' ';
+        const completedLine = (prefixSoFar ? prefixSoFar + ' ' : '') + fullWord + ' ';
+        return { completedLine, addition, matches: [fullWord] };
+      } else if (matches.length > 1) {
+        let commonPrefix = matches[0];
+        for (let m = 1; m < matches.length; m++) {
+          let j = 0;
+          while (j < commonPrefix.length && j < matches[m].length && commonPrefix[j].toLowerCase() === matches[m][j].toLowerCase()) {
+            j++;
+          }
+          commonPrefix = commonPrefix.slice(0, j);
+        }
+        const addition = commonPrefix.length > token.length ? commonPrefix.slice(token.length) : '';
+        const completedLine = (prefixSoFar ? prefixSoFar + ' ' : '') + (token + addition);
+        return { completedLine, addition, matches };
+      }
+    }
+  }
+
+  if (isTrailingSpace) {
+    const wordIndex = tokens.length;
+    const matchingTemplates = templates.filter(t => t.toLowerCase().startsWith(rawLine.trim().toLowerCase() + ' '));
+    const nextWords = [...new Set(matchingTemplates.map(t => t.split(' ')[wordIndex]).filter(Boolean))];
+    if (nextWords.length === 1) {
+      const fullWord = nextWords[0];
+      return { completedLine: rawLine + fullWord + ' ', addition: fullWord + ' ', matches: [fullWord] };
+    }
+    return { completedLine: rawLine, addition: '', matches: nextWords };
+  }
+
+  return { completedLine: rawLine, addition: '', matches: [] };
+}
+
 export { getPrompt, normalizeInterface };

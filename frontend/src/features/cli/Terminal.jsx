@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { createCliContext, interpret, getPrompt } from './CommandParser.js';
+import { createCliContext, interpret, getPrompt, autocompleteCommand } from './CommandParser.js';
 import useProjectStore from '../../store/projectStore.js';
 
 export default function CliTerminal({ deviceId }) {
@@ -256,8 +256,21 @@ export default function CliTerminal({ deviceId }) {
         return;
       }
 
-      // Tab — ignore
-      if (data === '\t') return;
+      // Tab — Cisco CLI Autocomplete
+      if (data === '\t') {
+        const freshDevice = getDevice(deviceId);
+        if (ctxRef.current) ctxRef.current.device = freshDevice;
+        const auto = autocompleteCommand(lineRef.current, ctxRef.current);
+        if (auto.addition) {
+          lineRef.current += auto.addition;
+          xterm.write(auto.addition);
+        } else if (auto.matches && auto.matches.length > 1) {
+          xterm.write('\r\n' + auto.matches.join('  ') + '\r\n');
+          writePrompt();
+          xterm.write(lineRef.current);
+        }
+        return;
+      }
 
       // Ctrl+C — cancel line
       if (data === '\x03') {

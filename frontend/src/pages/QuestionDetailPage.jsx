@@ -54,6 +54,15 @@ export default function QuestionDetailPage() {
     finally { setSavingQuestion(false); }
   };
 
+  const handleTestLab = async () => {
+    try {
+      const proj = await api.createProject(id);
+      navigate(`/student/lab/${proj.id}`);
+    } catch (err) {
+      setError('Failed to launch lab: ' + err.message);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this question? This cannot be undone.')) return;
     try {
@@ -116,6 +125,10 @@ export default function QuestionDetailPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h3 style={{ fontSize: 15, color: 'var(--text-secondary)', margin: 0 }}>📝 Question Details</h3>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleTestLab}
+            >🧪 Launch Interactive Lab</button>
             <button
               className="btn btn-danger btn-sm"
               onClick={handleDelete}

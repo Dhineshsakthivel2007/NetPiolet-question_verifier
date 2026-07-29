@@ -45,22 +45,32 @@ def _run_check(network: ParsedNetwork, check: CheckItem, role_map: DeviceRoleMap
             safe_params["_network_addr"] = network_param
 
         # ── Dynamic device resolution ──
-        # If params has 'device' or 'device_role', resolve to actual name
-        if "device" in safe_params or "device_role" in safe_params:
-            resolved_name, error = resolve_device_param(network, role_map, safe_params)
-            if error:
-                return CheckResult(
-                    check_type=check.type,
-                    check_description=check.description,
-                    passed=False,
-                    message=error,
-                    score=0.0,
-                    weight=check.weight,
-                    required=check.required,
-                )
-            # Replace both device and device_role with the resolved name
-            safe_params.pop("device_role", None)
-            safe_params["device"] = resolved_name
+        # Resolve all parameters representing a device or role (e.g. 'device', 'device1', 'device2', 'src_device')
+        for key in list(safe_params.keys()):
+            if key == "device_role" or key == "device" or key.startswith("device") or key.endswith("device"):
+                val = safe_params[key]
+                if not val or not isinstance(val, str):
+                    continue
+                temp_params = {"device": val}
+                resolved_name, error = resolve_device_param(network, role_map, temp_params)
+                if error:
+                    # If resolving fails for a main device param, return failure
+                    if key in ("device", "device1", "device2", "src_device", "dst_device"):
+                        return CheckResult(
+                            check_type=check.type,
+                            check_description=check.description,
+                            passed=False,
+                            message=error,
+                            score=0.0,
+                            weight=check.weight,
+                            required=check.required,
+                        )
+                else:
+                    safe_params[key] = resolved_name
+                    # Clean up role helper key if present
+                    if key == "device_role":
+                        safe_params.pop("device_role", None)
+                        safe_params["device"] = resolved_name
 
         result = validator.validate(network, **safe_params)
         return CheckResult(

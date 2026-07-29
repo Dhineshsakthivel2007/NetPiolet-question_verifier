@@ -1,7 +1,7 @@
 export const DEVICE_CATALOG = [
   {
     type: 'router', label: 'Router', icon: '🔀', category: 'Network',
-    defaultPorts: ['GigabitEthernet0/0', 'GigabitEthernet0/1', 'Serial0/0/0', 'Serial0/0/1'],
+    defaultPorts: ['GigabitEthernet0/0', 'GigabitEthernet0/1', 'GigabitEthernet0/2', 'GigabitEthernet0/3'],
     model: '2911', color: '#7C5CFC',
   },
   {
@@ -22,6 +22,10 @@ export const DEVICE_CATALOG = [
     defaultPorts: ['FastEthernet0'],
     model: 'Server-PT', color: '#F59E0B',
   },
+  {
+    type: 'note', label: 'Place Note', icon: '📝', category: 'Annotations',
+    defaultPorts: [], model: 'Note-PT', color: '#F59E0B',
+  },
 ];
 
 let deviceCounters = {};
@@ -33,6 +37,19 @@ export function resetCounters() {
 export function getDeviceDefaults(type) {
   const def = DEVICE_CATALOG.find(d => d.type === type);
   if (!def) return null;
+  if (type === 'note') {
+    return {
+      type: 'note',
+      hostname: 'Note',
+      text: 'Place Note: Subnet / IP Info (double-click to edit)',
+      fontSize: 13,
+      color: '#1F2937',
+      bgColor: '#FEF3C7',
+      borderColor: '#F59E0B',
+      interfaces: {},
+      running_config: { hostname: 'Note', global_commands: [], router_sections: {} },
+    };
+  }
   const interfaces = {};
   def.defaultPorts.forEach(port => {
     interfaces[port] = { ip: '', mask: '', status: 'down', vlan: null, trunk_allowed_vlans: null, commands: [] };

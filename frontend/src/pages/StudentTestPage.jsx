@@ -87,11 +87,28 @@ export default function StudentTestPage() {
     }
   };
 
-  const finishAndLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('role');
-    localStorage.removeItem('username');
-    navigate('/login');
+  const [feedbackError, setFeedbackError] = useState('');
+
+  const finishAndReturn = () => {
+    if (!feedback.rating || !feedback.difficulty) {
+      setFeedbackError('⚠️ Please select both a Star Rating and Difficulty Level to submit feedback.');
+      return;
+    }
+    setFeedbackError('');
+    setFeedbackDone(true);
+    setTimeout(() => {
+      const role = localStorage.getItem('role');
+      if (role === 'admin') {
+        navigate('/results');
+      } else if (role === 'professor') {
+        navigate('/questions');
+      } else {
+        localStorage.removeItem('token');
+        localStorage.removeItem('role');
+        localStorage.removeItem('username');
+        navigate('/login');
+      }
+    }, 1500);
   };
 
   const resetAll = () => {
@@ -160,7 +177,8 @@ export default function StudentTestPage() {
                 <textarea className="form-textarea" rows={3} placeholder="Any suggestions..." value={feedback.comment}
                   onChange={e => setFeedback(f => ({...f, comment: e.target.value}))} style={{ minHeight: 70, fontSize: 14 }} />
               </div>
-              <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={() => { setFeedbackDone(true); setTimeout(finishAndLogout, 1500); }}>Submit Feedback</button>
+              {feedbackError && <p style={{ color: '#EF4444', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{feedbackError}</p>}
+              <button className="btn btn-primary btn-lg" style={{ width: '100%' }} onClick={finishAndReturn}>Submit Feedback</button>
             </>
           )}
         </div>

@@ -58,13 +58,13 @@ export default function App() {
         </Route>
 
         {/* Student Routes */}
-        <Route path="/student" element={<ProtectedRoute allowedRoles={['student']}><StudentLayout /></ProtectedRoute>}>
+        <Route path="/student" element={<ProtectedRoute allowedRoles={['admin', 'professor', 'student']}><StudentLayout /></ProtectedRoute>}>
           <Route index element={<StudentTestPage />} />
           <Route path="results" element={<StudentResultsPage />} />
         </Route>
 
         {/* Lab Page — fullscreen, outside layout wrapper */}
-        <Route path="/student/lab/:projectId" element={<ProtectedRoute allowedRoles={['student']}><LabPage /></ProtectedRoute>} />
+        <Route path="/student/lab/:projectId" element={<ProtectedRoute allowedRoles={['admin', 'professor', 'student']}><LabPage /></ProtectedRoute>} />
 
         {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/login" replace />} />

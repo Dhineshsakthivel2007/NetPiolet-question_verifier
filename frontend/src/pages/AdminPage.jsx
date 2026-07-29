@@ -1,9 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api.js';
 
 export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'student' });
+  const [addError, setAddError] = useState('');
+  const [addSuccess, setAddSuccess] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const fileRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -29,11 +36,56 @@ export default function AdminPage() {
     load();
   };
 
+  /* ─── Manual Add User ─── */
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    setAddError(''); setAddSuccess('');
+    try {
+      const res = await api.adminCreateUser(newUser);
+      setAddSuccess(res.message || `User "${newUser.username}" created & activated.`);
+      setNewUser({ username: '', email: '', password: '', role: 'student' });
+      load();
+    } catch (err) {
+      setAddError(err.message);
+    }
+  };
+
+  const [bulkRole, setBulkRole] = useState('student');
+  const [pendingFile, setPendingFile] = useState(null);
+
+  /* ─── Excel File Picked ─── */
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setPendingFile(file);
+    setUploadMsg('');
+  };
+
+  /* ─── Execute Bulk Upload ─── */
+  const executeBulkUpload = async () => {
+    if (!pendingFile) return;
+    setUploading(true); setUploadMsg('');
+    try {
+      const formData = new FormData();
+      formData.append('file', pendingFile);
+      formData.append('role', bulkRole);
+      const res = await api.adminBulkUploadUsers(formData);
+      setUploadMsg(`✅ Successfully imported ${res.created} ${bulkRole}(s). (${res.skipped} skipped/duplicate)`);
+      setPendingFile(null);
+      load();
+    } catch (err) {
+      setUploadMsg(`❌ Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
   return (
     <>
       <div className="page-header">
         <h2>👥 User Management</h2>
-        <p>Approve, manage roles, and control access for all users</p>
+        <p>Add users manually or import from Excel, manage roles and access</p>
       </div>
 
       {/* Stats */}
@@ -58,6 +110,93 @@ export default function AdminPage() {
           <div className="stat-value">{users.filter(u => u.role === 'student').length}</div>
           <div className="stat-label">Students</div>
         </div>
+      </div>
+
+      {/* Add User Controls */}
+      <div className="card" style={{ marginBottom: 24, padding: '20px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary btn-sm" onClick={() => { setShowAddForm(!showAddForm); setAddError(''); setAddSuccess(''); }}>
+            {showAddForm ? '✕ Cancel' : '➕ Add User Manually'}
+          </button>
+
+          <div style={{ position: 'relative' }}>
+            <input type="file" ref={fileRef} accept=".xlsx,.xls,.csv" onChange={handleFileSelect} style={{ display: 'none' }} />
+            <button className="btn btn-sm btn-secondary" onClick={() => fileRef.current?.click()} disabled={uploading}>
+              📥 Select Excel File
+            </button>
+          </div>
+
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
+            Excel columns: <code style={{ fontSize: 11, background: 'var(--bg-primary)', padding: '2px 6px', borderRadius: 4 }}>username, email</code>
+          </span>
+        </div>
+
+        {/* Selected Excel File & Role Assignment Box */}
+        {pendingFile && (
+          <div style={{
+            marginTop: 16, padding: '14px 18px', background: 'var(--bg-secondary)',
+            borderRadius: 'var(--radius-md)', border: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap'
+          }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>📁 {pendingFile.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{(pendingFile.size / 1024).toFixed(1)} KB</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Select Role for Imported Users:</label>
+              <select className="form-select" value={bulkRole} onChange={e => setBulkRole(e.target.value)} style={{ width: 130, padding: '5px 8px', fontSize: 13 }}>
+                <option value="student">Student</option>
+                <option value="professor">Professor</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button className="btn btn-sm btn-success" onClick={executeBulkUpload} disabled={uploading}>
+                {uploading ? '⏳ Importing...' : '✅ Confirm & Import Users'}
+              </button>
+              <button className="btn btn-sm btn-secondary" onClick={() => { setPendingFile(null); if (fileRef.current) fileRef.current.value = ''; }} disabled={uploading}>
+                ✕ Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {uploadMsg && (
+          <p style={{ marginTop: 12, fontSize: 13, fontWeight: 600, color: uploadMsg.startsWith('✅') ? '#16A34A' : '#DC2626' }}>
+            {uploadMsg}
+          </p>
+        )}
+
+        {/* Manual Add Form */}
+        {showAddForm && (
+          <form onSubmit={handleAddUser} style={{ marginTop: 20, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <label className="form-label" style={{ fontSize: 12 }}>Username</label>
+              <input className="form-input" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })}
+                placeholder="Username" required style={{ width: 160, padding: '6px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label className="form-label" style={{ fontSize: 12 }}>Email</label>
+              <input className="form-input" type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })}
+                placeholder="user@bitsathy.ac.in" required style={{ width: 220, padding: '6px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label className="form-label" style={{ fontSize: 12 }}>Password</label>
+              <input className="form-input" type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })}
+                placeholder="Min 6 chars" required minLength={6} style={{ width: 150, padding: '6px 10px', fontSize: 13 }} />
+            </div>
+            <div>
+              <label className="form-label" style={{ fontSize: 12 }}>Role</label>
+              <select className="form-select" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}
+                style={{ width: 130, padding: '6px 10px', fontSize: 13 }}>
+                <option value="student">Student</option>
+                <option value="professor">Professor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <button className="btn btn-sm btn-success" type="submit">✓ Create & Activate</button>
+            {addError && <p style={{ color: '#DC2626', fontSize: 13, fontWeight: 600, width: '100%', marginTop: 4 }}>❌ {addError}</p>}
+            {addSuccess && <p style={{ color: '#16A34A', fontSize: 13, fontWeight: 600, width: '100%', marginTop: 4 }}>✅ {addSuccess}</p>}
+          </form>
+        )}
       </div>
 
       {loading ? (

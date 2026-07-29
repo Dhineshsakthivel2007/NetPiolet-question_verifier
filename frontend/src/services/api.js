@@ -36,6 +36,8 @@ export const api = {
   approveUser: (id, isActive) => request(`/auth/users/${id}/approve`, { method: 'PUT', body: JSON.stringify({ is_active: isActive }) }),
   changeUserRole: (id, role) => request(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
+  adminCreateUser: (data) => request('/auth/users/create', { method: 'POST', body: JSON.stringify(data) }),
+  adminBulkUploadUsers: (formData) => request('/auth/users/bulk-upload', { method: 'POST', body: formData, headers: {} }),
 
   // Topics
   getTopics: () => request('/topics'),

@@ -47,6 +47,79 @@ export default function PropertiesPanel() {
     );
   }
 
+  if (device.type === 'note') {
+    const NOTE_THEMES = [
+      { label: 'Yellow', bg: '#FEF3C7', border: '#F59E0B', text: '#1F2937' },
+      { label: 'Blue', bg: '#EFF6FF', border: '#3B82F6', text: '#1E3A8A' },
+      { label: 'Green', bg: '#ECFDF5', border: '#10B981', text: '#064E3B' },
+      { label: 'Purple', bg: '#F5F3FF', border: '#8B5CF6', text: '#4C1D95' },
+      { label: 'Dark', bg: '#1F2937', border: '#4B5563', text: '#F9FAFB' },
+    ];
+
+    return (
+      <div style={{ width: 300, background: 'white', borderLeft: '1px solid #E5E7EB', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '14px 14px 8px', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>📝 Edit Place Note</h3>
+          <button onClick={() => useProjectStore.getState().selectDevice(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#9CA3AF' }}>✕</button>
+        </div>
+        <div style={{ padding: 14, flex: 1 }}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', display: 'block', marginBottom: 4 }}>Note Content</label>
+            <textarea
+              className="form-textarea"
+              rows={4}
+              value={device.text || ''}
+              onChange={e => useProjectStore.getState().updateDeviceConfig(selectedDevice, { text: e.target.value })}
+              placeholder="Enter note text (e.g. Subnet 192.168.1.0/24)..."
+              style={{ width: '100%', fontSize: 13, padding: '8px 10px' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', display: 'block', marginBottom: 6 }}>Font Size ({device.fontSize || 13}px)</label>
+            <input
+              type="range"
+              min="10"
+              max="24"
+              value={device.fontSize || 13}
+              onChange={e => useProjectStore.getState().updateDeviceConfig(selectedDevice, { fontSize: parseInt(e.target.value, 10) })}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', display: 'block', marginBottom: 6 }}>Note Color Theme</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+              {NOTE_THEMES.map(theme => (
+                <button
+                  key={theme.label}
+                  onClick={() => useProjectStore.getState().updateDeviceConfig(selectedDevice, {
+                    bgColor: theme.bg,
+                    borderColor: theme.border,
+                    color: theme.text,
+                  })}
+                  style={{
+                    height: 28,
+                    background: theme.bg,
+                    border: `2px solid ${device.bgColor === theme.bg ? '#7C5CFC' : theme.border}`,
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                  title={theme.label}
+                />
+              ))}
+            </div>
+          </div>
+
+          <button className="btn btn-sm" onClick={() => removeDevice(selectedDevice)}
+            style={{ width: '100%', background: '#FEF2F2', color: '#EF4444', border: '1px solid #FECACA', marginTop: 12 }}>
+            🗑 Delete Note
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const def = getDeviceDef(device.type);
   const ifaces = Object.entries(device.interfaces || {});
   const isPcOrServer = device.type === 'pc' || device.type === 'server';

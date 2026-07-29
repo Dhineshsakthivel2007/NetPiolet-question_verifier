@@ -109,10 +109,13 @@ def get_evaluations(
         query = query.filter(Evaluation.question_id == question_id)
     if student_id:
         query = query.filter(Evaluation.student_id == student_id)
-    if passed is not None:
-        query = query.filter(Evaluation.passed == passed)
     if created_by:
         query = query.filter(Evaluation.created_by == created_by)
+
+    # Filter passed in SQL only if not deduplicating, else filter post-deduplication
+    if not latest_only and passed is not None:
+        query = query.filter(Evaluation.passed == passed)
+
     evals = query.order_by(Evaluation.created_at.desc()).all()
 
     if latest_only:
@@ -123,6 +126,8 @@ def get_evaluations(
             if key not in seen:
                 seen.add(key)
                 deduped.append(ev)
+        if passed is not None:
+            deduped = [ev for ev in deduped if ev.passed == passed]
         return deduped
 
     return evals

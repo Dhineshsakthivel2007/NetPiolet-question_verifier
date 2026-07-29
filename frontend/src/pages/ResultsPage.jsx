@@ -20,7 +20,19 @@ export default function ResultsPage() {
       api.getEvaluations(params),
       api.getQuestions(),
     ]).then(([res, qs]) => {
-      setEvaluations(res.items || []);
+      // Deduplicate: keep only the latest entry per student per day
+      const raw = res.items || [];
+      const seen = new Map();
+      for (const ev of raw) {
+        const studentKey = ev.student_id || ev.student_name || ev.created_by || 'anon';
+        const dateKey = ev.evaluated_at ? new Date(ev.evaluated_at).toISOString().slice(0, 10) : 'unknown';
+        const key = `${studentKey}__${ev.question_id}__${dateKey}`;
+        // First occurrence is the latest (results are sorted desc by date)
+        if (!seen.has(key)) {
+          seen.set(key, ev);
+        }
+      }
+      setEvaluations([...seen.values()]);
       setQuestions(qs || []);
     });
   }, [filterPassed, filterQuestion]);

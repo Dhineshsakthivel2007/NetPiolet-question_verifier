@@ -105,12 +105,13 @@ const useProjectStore = create((set, get) => ({
     while (usedNums.has(num)) num++;
     const hostname = `${label}${num}`;
 
+    const isNote = defaults.type === 'note';
     const node = {
       id,
-      type: 'device',
+      type: isNote ? 'note' : 'device',
       position,
       draggable: true,
-      data: { ...defaults, id, hostname, running_config: { ...defaults.running_config, hostname } },
+      data: { ...defaults, id, hostname: isNote ? 'Note' : hostname, running_config: { ...defaults.running_config, hostname: isNote ? 'Note' : hostname } },
     };
     set(s => ({ nodes: [...s.nodes, node] }));
     get()._autoSave();
@@ -229,7 +230,7 @@ const useProjectStore = create((set, get) => ({
       // Convert stored nodes back to React Flow format
       const nodes = (state.nodes || []).map(n => ({
         id: n.id,
-        type: 'device',
+        type: n.type === 'note' ? 'note' : 'device',
         position: n.position || { x: 0, y: 0 },
         data: { ...n, id: n.id },
       }));
@@ -261,7 +262,11 @@ const useProjectStore = create((set, get) => ({
       });
       if (qRes.ok) {
         const q = await qRes.json();
-        set({ questionTitle: q.title, questionText: q.question_text, evaluationPlan: q.evaluation_plan });
+        set({
+          questionTitle: q.title,
+          questionText: q.question_text,
+          evaluationPlan: q.evaluation_plan,
+        });
       }
     } catch (err) {
       console.error('Load project failed:', err);
@@ -270,7 +275,9 @@ const useProjectStore = create((set, get) => ({
 
   _autoSave: () => {
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => get().saveProject(), 2000);
+    saveTimer = setTimeout(() => {
+      get().saveProject();
+    }, 2000);
   },
 
   saveProject: async () => {
@@ -288,6 +295,11 @@ const useProjectStore = create((set, get) => ({
           running_config: n.data.running_config,
           vlans: n.data.vlans,
           vtp: n.data.vtp,
+          text: n.data.text,
+          fontSize: n.data.fontSize,
+          bgColor: n.data.bgColor,
+          borderColor: n.data.borderColor,
+          color: n.data.color,
         })),
         edges: edges.map(e => ({
           id: e.id,
