@@ -40,8 +40,22 @@ export default function StudentTestPage() {
     try {
       const questions = await api.getStudentQuestions();
       if (!questions?.length) { setError('No tests available. Contact your professor.'); setLoading(false); return; }
-      const q = questions[0];
+      
+      const savedQId = localStorage.getItem('activeQuestionId');
+      const q = (savedQId && questions.find(x => x.id === savedQId)) || questions[0];
+      
       setQuestion(q);
+      localStorage.setItem('activeQuestionId', q.id);
+
+      // Create test session for timer tracking
+      try {
+        const sess = await api.startTest(q.id);
+        localStorage.setItem('testSessionId', sess.id || '');
+        localStorage.setItem('testExpiresAt', sess.expires_at || '');
+      } catch (sessErr) {
+        console.warn('Test session creation skipped:', sessErr.message);
+      }
+      localStorage.setItem('testQuestionTitle', q.title || '');
       const proj = await api.createProject(q.id);
       navigate(`/student/lab/${proj.id}`);
     } catch (e) { setError(e.message); }

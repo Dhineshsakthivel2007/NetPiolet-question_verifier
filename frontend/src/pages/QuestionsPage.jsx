@@ -6,7 +6,7 @@ export default function QuestionsPage() {
   const [questions, setQuestions] = useState([]);
   const [topics, setTopics] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '' });
+  const [form, setForm] = useState({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3 });
   const [loading, setLoading] = useState(false);
   const [filterTopic, setFilterTopic] = useState('');
   const navigate = useNavigate();
@@ -24,7 +24,7 @@ export default function QuestionsPage() {
     e.preventDefault(); setLoading(true);
     try {
       const q = await api.createQuestion(form);
-      setShowModal(false); setForm({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '' });
+      setShowModal(false); setForm({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3 });
       navigate(`/questions/${q.id}`);
     } catch (err) { alert(err.message); }
     finally { setLoading(false); }
@@ -102,6 +102,17 @@ export default function QuestionsPage() {
                 <div className="form-group">
                   <label className="form-label">Year</label>
                   <input className="form-input" value={form.academic_year} onChange={e => setForm({...form, academic_year: e.target.value})} placeholder="2025-2026" />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Test Duration (minutes)</label>
+                  <input className="form-input" type="number" min="0" value={form.time_limit_minutes} onChange={e => setForm({...form, time_limit_minutes: parseInt(e.target.value) || 0})} />
+                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>0 = unlimited</span>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Max Attempts</label>
+                  <input className="form-input" type="number" min="1" max="10" value={form.max_attempts} onChange={e => setForm({...form, max_attempts: parseInt(e.target.value) || 1})} />
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12 }}>

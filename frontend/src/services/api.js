@@ -74,6 +74,10 @@ export const api = {
   clearSubmission: (sessionId) => request(`/student/test/${sessionId}/clear`, { method: 'POST' }),
   getTestSession: (sessionId) => request(`/student/test/${sessionId}`),
   getStudentResults: () => request('/student/results'),
+  lockTestSession: (sessionId) => request(`/student/test/${sessionId}/lock`, { method: 'POST' }),
+  unlockTestSession: (sessionId) => request(`/student/test/${sessionId}/unlock`, { method: 'POST' }),
+  reportWarning: (questionId, warningCount, reason = 'Exited full screen') => request(`/student/test/${questionId}/report-warning`, { method: 'POST', body: JSON.stringify({ warning_count: warningCount, reason }) }),
+  getAllTestSessions: () => request('/student/all-sessions'),
 
   // Projects
   createProject: (questionId) => request('/projects', { method: 'POST', body: JSON.stringify({ question_id: questionId }) }),

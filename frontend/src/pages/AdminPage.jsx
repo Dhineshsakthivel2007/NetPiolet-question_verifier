@@ -18,7 +18,33 @@ export default function AdminPage() {
     catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  const [sessions, setSessions] = useState([]);
+  const [unlockMsg, setUnlockMsg] = useState('');
+
+  const loadSessions = async () => {
+    try {
+      const s = await api.getAllTestSessions();
+      setSessions(s || []);
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => {
+    load();
+    loadSessions();
+    const interval = setInterval(loadSessions, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleUnlockSession = async (sessionId, studentName) => {
+    try {
+      await api.unlockTestSession(sessionId);
+      setUnlockMsg(`✅ Unlocked Test Session for ${studentName}! Warnings reset and session extended by 30 mins.`);
+      setTimeout(() => setUnlockMsg(''), 5000);
+      loadSessions();
+    } catch (err) {
+      alert('Failed to unlock session: ' + err.message);
+    }
+  };
 
   const handleApprove = async (id, active) => {
     await api.approveUser(id, active);
@@ -252,6 +278,79 @@ export default function AdminPage() {
           </table>
         </div>
       )}
+
+      {/* Proctoring & Test Sessions Section */}
+      <div className="card" style={{ marginTop: 24, padding: '24px' }}>
+        <h3 style={{ fontSize: 17, fontWeight: 800, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          🔒 Student Test Sessions & Proctoring Violations
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+          Monitor active tests, view proctoring warning counts, and unlock sessions terminated due to maximum exit warnings.
+        </p>
+
+        {unlockMsg && (
+          <div style={{ padding: '10px 16px', background: '#D1FAE5', color: '#065F46', borderRadius: 8, fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+            {unlockMsg}
+          </div>
+        )}
+
+        {sessions.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#9CA3AF', fontStyle: 'italic' }}>No active or past student test sessions recorded yet.</p>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Question</th>
+                <th>Proctor Status</th>
+                <th>Score</th>
+                <th>Started</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map(s => (
+                <tr key={s.id}>
+                  <td><strong>{s.student_name}</strong> <span style={{ fontSize: 12, color: '#9CA3AF' }}>({s.student_email})</span></td>
+                  <td>{s.question_title}</td>
+                  <td>
+                    {s.proctor_locked ? (
+                      <span className="badge" style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontWeight: 800 }}>
+                        🚨 LOCKED ({s.warning_count}/3 Warnings)
+                      </span>
+                    ) : s.warning_count > 0 ? (
+                      <span className="badge" style={{ background: '#FEF3C7', color: '#D97706' }}>
+                        ⚠️ {s.warning_count}/3 Warnings
+                      </span>
+                    ) : s.is_completed ? (
+                      <span className="badge badge-pass">Completed</span>
+                    ) : (
+                      <span className="badge badge-pending">Active</span>
+                    )}
+                  </td>
+                  <td><strong>{s.best_score?.toFixed(0)}</strong> / 100</td>
+                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {s.started_at ? new Date(s.started_at).toLocaleString() : '—'}
+                  </td>
+                  <td>
+                    {s.proctor_locked || s.is_completed || s.warning_count > 0 ? (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px' }}
+                        onClick={() => handleUnlockSession(s.id, s.student_name)}
+                      >
+                        🔓 Reset Warnings & Unlock
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: 12, color: '#9CA3AF' }}>Normal</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </>
   );
 }

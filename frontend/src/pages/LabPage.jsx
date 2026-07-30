@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import CanvasEngine from '../features/canvas/CanvasEngine.jsx';
@@ -6,6 +6,7 @@ import DevicePalette from '../features/devices/DevicePalette.jsx';
 import PropertiesPanel from '../features/properties/PropertiesPanel.jsx';
 import CliTerminal from '../features/cli/Terminal.jsx';
 import useProjectStore from '../store/projectStore.js';
+import { api } from '../services/api.js';
 
 export default function LabPage() {
   const { projectId } = useParams();
@@ -19,6 +20,17 @@ export default function LabPage() {
   const [feedback, setFeedback] = useState({ rating: 0, difficulty: '', comment: '' });
   const [feedbackDone, setFeedbackDone] = useState(false);
 
+  // Timer State
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timerExpired, setTimerExpired] = useState(false);
+  const timerRef = useRef(null);
+
+  // Proctoring State
+  const [warningCount, setWarningCount] = useState(0);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [warningReason, setWarningReason] = useState('');
+  const [terminatedByProctor, setTerminatedByProctor] = useState(false);
+
   const loadProject = useProjectStore(s => s.loadProject);
   const submitProject = useProjectStore(s => s.submitProject);
   const finishProject = useProjectStore(s => s.finishProject);
@@ -29,6 +41,8 @@ export default function LabPage() {
   const openTerminals = useProjectStore(s => s.openTerminals);
   const closeTerminal = useProjectStore(s => s.closeTerminal);
   const questionTitle = useProjectStore(s => s.questionTitle);
+  const questionId = useProjectStore(s => s.questionId);
+  const questionTimeLimit = useProjectStore(s => s.questionTimeLimit);
   const nodes = useProjectStore(s => s.nodes);
 
   useEffect(() => {
@@ -44,6 +58,192 @@ export default function LabPage() {
       setActiveTerminal(null);
     }
   }, [openTerminals, activeTerminal]);
+
+  // Countdown Timer & Admin Unlock Sync Effect
+  useEffect(() => {
+    if (!questionId || !questionTimeLimit || questionTimeLimit <= 0) {
+      setTimeLeft(null);
+      return;
+    }
+
+    let isMounted = true;
+    let pollInterval = null;
+
+    const checkSessionAndInitTimer = async () => {
+      let expiry = null;
+
+      const role = localStorage.getItem('role');
+      if (role === 'student') {
+        try {
+          const sess = await api.startTest(questionId);
+          if (!isMounted) return;
+
+          if (sess) {
+            if (!sess.proctor_locked) {
+              // Admin unlocked the session! Reset local state
+              setWarningCount(sess.warning_count || 0);
+              setTerminatedByProctor(false);
+              setShowWarningModal(false);
+              setTimerExpired(false);
+              if (!sess.is_completed) {
+                useProjectStore.setState({ submitResult: null });
+              }
+            } else {
+              setWarningCount(3);
+              setTerminatedByProctor(true);
+            }
+
+            if (sess.expires_at) {
+              const parsed = new Date(sess.expires_at).getTime();
+              if (!isNaN(parsed)) expiry = parsed;
+            }
+          }
+        } catch (err) {
+          console.warn('Student test session fetch:', err.message);
+        }
+      }
+
+      // Fallback / Admin / Professor testing: Use session start time
+      if (!expiry && questionTimeLimit > 0) {
+        const sessionKey = `lab_start_${questionId}`;
+        let startTs = parseInt(sessionStorage.getItem(sessionKey) || '0');
+        if (!startTs || isNaN(startTs)) {
+          startTs = Date.now();
+          sessionStorage.setItem(sessionKey, startTs.toString());
+        }
+        expiry = startTs + questionTimeLimit * 60 * 1000;
+      }
+
+      if (!isMounted || !expiry) return;
+
+      const tick = () => {
+        const remaining = Math.max(0, Math.floor((expiry - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          setTimerExpired(true);
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          const store = useProjectStore.getState();
+          if (!store.submitResult) {
+            store.submitProject().catch(() => {});
+          }
+        }
+      };
+
+      tick();
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(tick, 1000);
+    };
+
+    checkSessionAndInitTimer();
+
+    // Poll backend every 5 seconds for admin unlock signals
+    const role = localStorage.getItem('role');
+    if (role === 'student') {
+      pollInterval = setInterval(checkSessionAndInitTimer, 5000);
+    }
+
+    return () => {
+      isMounted = false;
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [questionId, questionTimeLimit]);
+
+  // Fullscreen Proctoring Effect
+  useEffect(() => {
+    const role = localStorage.getItem('role');
+    const isStudent = role === 'student';
+    if (!isStudent) return;
+
+    // Request fullscreen on mount
+    const requestFS = async () => {
+      try {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (err) {}
+    };
+    requestFS();
+
+    const triggerViolation = (reason) => {
+      if (useProjectStore.getState().submitResult) return;
+      setWarningCount((prev) => {
+        const next = prev + 1;
+        const qId = useProjectStore.getState().questionId;
+        if (qId) {
+          api.reportWarning(qId, next, reason).catch(() => {});
+        }
+        if (next >= 3) {
+          setTerminatedByProctor(true);
+          setShowWarningModal(false);
+          // Auto-submit on 3rd violation
+          const store = useProjectStore.getState();
+          if (!store.submitResult) {
+            store.submitProject().catch(() => {});
+          }
+          return 3;
+        } else {
+          setWarningReason(reason);
+          setShowWarningModal(true);
+          return next;
+        }
+      });
+    };
+
+    const handleFSChange = () => {
+      if (!document.fullscreenElement && !useProjectStore.getState().submitResult) {
+        triggerViolation('Exited Full Screen mode');
+      }
+    };
+    const handleVisChange = () => {
+      if (document.hidden && !useProjectStore.getState().submitResult) {
+        triggerViolation('Switched tabs or minimized browser window');
+      }
+    };
+    const handleKeyDown = (e) => {
+      // Intercept Ctrl+R, Cmd+R, F5 refresh keys to return to Exam Guidelines page
+      if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') || e.key === 'F5') {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        window.location.href = '/student';
+        return;
+      }
+
+      if (e.key === 'Escape' && !useProjectStore.getState().submitResult) {
+        triggerViolation('Pressed Esc key');
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFSChange);
+    document.addEventListener('visibilitychange', handleVisChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFSChange);
+      document.removeEventListener('visibilitychange', handleVisChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const returnToFullScreen = async () => {
+    setShowWarningModal(false);
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err) {}
+  };
+
+  const fmtTime = (s) => {
+    if (s === null) return null;
+    const h = String(Math.floor(s / 3600)).padStart(2, '0');
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    return `${h}:${m}:${sec}`;
+  };
+  const timerColor = timeLeft !== null && timeLeft <= 60 ? '#EF4444' : timeLeft !== null && timeLeft <= 300 ? '#F59E0B' : '#10B981';
+  const timerPulse = timeLeft !== null && timeLeft <= 60;
 
   const handleSubmit = async () => {
     setSubmitError('');
@@ -112,9 +312,23 @@ export default function LabPage() {
         boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={() => navigate('/student')} style={{
-            background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#6B7280',
-          }}>← </button>
+          <button
+            title="Restart & Return to Exam Guidelines"
+            onClick={() => {
+              if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+              }
+              window.location.href = '/student';
+            }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 36, color: '#6B7280', padding: '4px 6px',
+              borderRadius: 6, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', transition: 'all 0.2s',
+            }}
+          >
+            ⟳
+          </button>
           <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg, #7C5CFC, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 800 }}>PG</div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#1F2937' }}>{questionTitle || 'Lab Environment'}</div>
@@ -123,6 +337,24 @@ export default function LabPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Timer */}
+          {timeLeft !== null && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '4px 14px',
+              borderRadius: 8, fontWeight: 800, fontSize: 15, fontFamily: 'monospace',
+              color: timerColor, background: `${timerColor}15`,
+              border: `1.5px solid ${timerColor}40`,
+              animation: timerPulse ? 'pulse 1s infinite' : 'none',
+            }}>
+              ⏱ {fmtTime(timeLeft)}
+            </div>
+          )}
+          {/* Proctoring badge */}
+          {warningCount > 0 && (
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#F59E0B', background: '#FEF3C7', padding: '3px 10px', borderRadius: 6 }}>
+              ⚠️ {warningCount}/3
+            </span>
+          )}
           <span style={{ fontSize: 12, color: saving ? '#F59E0B' : '#10B981', display: 'flex', alignItems: 'center', gap: 4 }}>
             {saving ? '⏳ Saving...' : lastSaved ? `✓ Saved ${lastSaved.toLocaleTimeString()}` : ''}
           </span>
@@ -136,6 +368,82 @@ export default function LabPage() {
           </button>
         </div>
       </div>
+
+      {/* Proctoring Warning Modal */}
+      {showWarningModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 2000,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 440,
+            width: '90%', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.3s ease',
+          }}>
+            <div style={{ fontSize: 56, marginBottom: 10 }}>⚠️</div>
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#DC2626', marginBottom: 8 }}>
+              PROCTORING WARNING
+            </h2>
+            <div style={{
+              display: 'inline-block', padding: '4px 16px', borderRadius: 100, fontSize: 14, fontWeight: 800,
+              background: '#FEF2F2', color: '#EF4444', marginBottom: 16,
+            }}>
+              Warning {warningCount} of 3
+            </div>
+            <p style={{ fontSize: 15, color: '#4B5563', marginBottom: 8, lineHeight: 1.6 }}>
+              <strong>Violation:</strong> {warningReason}
+            </p>
+            <p style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 24 }}>
+              On your 3rd violation, your test will be <strong style={{ color: '#EF4444' }}>automatically submitted</strong>.
+            </p>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800 }}
+              onClick={returnToFullScreen}
+            >
+              🔒 Return to Full Screen Test
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Timer Expired Notice */}
+      {timerExpired && !evalResult && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1500,
+          background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 400,
+            textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ fontSize: 56, marginBottom: 10 }}>⏰</div>
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 12 }}>Time's Up!</h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 8 }}>Your test duration has expired.</p>
+            <p style={{ fontSize: 13, color: '#9CA3AF' }}>Your work is being auto-submitted for grading...</p>
+            <div className="spinner" style={{ margin: '20px auto' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Termination Notice */}
+      {terminatedByProctor && !evalResult && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1500,
+          background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 400,
+            textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ fontSize: 56, marginBottom: 10 }}>🚨</div>
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 12 }}>Test Terminated</h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 8 }}>Maximum proctoring warnings (3/3) exceeded.</p>
+            <p style={{ fontSize: 13, color: '#9CA3AF' }}>Your work is being auto-submitted for grading...</p>
+            <div className="spinner" style={{ margin: '20px auto' }} />
+          </div>
+        </div>
+      )}
 
       {/* Result & Feedback Modal */}
       {evalResult && (
@@ -237,13 +545,15 @@ export default function LabPage() {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-                  <button
-                    className="btn btn-secondary btn-lg"
-                    style={{ width: '100%', fontSize: 14, padding: '12px 18px', fontWeight: 700, border: '1.5px solid #7C5CFC', color: '#7C5CFC', background: '#F5F3FF' }}
-                    onClick={() => useProjectStore.setState({ submitResult: null })}
-                  >
-                    🛠️ Continue Editing
-                  </button>
+                  {!terminatedByProctor && (
+                    <button
+                      className="btn btn-secondary btn-lg"
+                      style={{ width: '100%', fontSize: 14, padding: '12px 18px', fontWeight: 700, border: '1.5px solid #7C5CFC', color: '#7C5CFC', background: '#F5F3FF' }}
+                      onClick={() => useProjectStore.setState({ submitResult: null })}
+                    >
+                      🛠️ Continue Editing
+                    </button>
+                  )}
                   <button
                     className="btn btn-primary btn-lg"
                     style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800 }}

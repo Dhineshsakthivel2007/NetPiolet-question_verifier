@@ -108,6 +108,7 @@ class TestSessionResponse(BaseModel):
     started_at: datetime; expires_at: datetime | None = None
     is_completed: bool; attempts_used: int
     best_score: float; passed: bool; created_at: datetime
+    proctor_locked: bool = False; warning_count: int = 0
     model_config = {"from_attributes": True}
 
 class StudentTestResultResponse(BaseModel):

@@ -16,6 +16,7 @@ export default function QuestionDetailPage() {
   const [editForm, setEditForm] = useState({
     title: '', question_text: '', week_number: 1,
     semester: '', academic_year: '', is_active: true,
+    time_limit_minutes: 60, max_attempts: 3,
   });
   const [savingQuestion, setSavingQuestion] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -30,6 +31,8 @@ export default function QuestionDetailPage() {
       semester: q.semester || '',
       academic_year: q.academic_year || '',
       is_active: q.is_active ?? true,
+      time_limit_minutes: q.time_limit_minutes ?? 60,
+      max_attempts: q.max_attempts ?? 3,
     });
     setHasChanges(false);
     if (q.evaluation_plan) setPlanJson(JSON.stringify(q.evaluation_plan, null, 2));
@@ -166,7 +169,7 @@ export default function QuestionDetailPage() {
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
           <div className="form-group">
             <label className="form-label">Week</label>
             <input
@@ -205,6 +208,28 @@ export default function QuestionDetailPage() {
               <option value="true">✅ Active</option>
               <option value="false">❌ Inactive</option>
             </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Duration (min)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="0"
+              value={editForm.time_limit_minutes}
+              onChange={e => handleFieldChange('time_limit_minutes', parseInt(e.target.value) || 0)}
+            />
+            <span style={{ fontSize: 11, color: '#9CA3AF' }}>0 = unlimited</span>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Max Attempts</label>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              max="10"
+              value={editForm.max_attempts}
+              onChange={e => handleFieldChange('max_attempts', parseInt(e.target.value) || 1)}
+            />
           </div>
         </div>
       </div>

@@ -36,6 +36,7 @@ const useProjectStore = create((set, get) => ({
   questionTitle: '',
   questionText: '',
   evaluationPlan: null,
+  questionTimeLimit: 0,
   nodes: [],
   edges: [],
   selectedDevice: null,
@@ -416,6 +417,7 @@ const useProjectStore = create((set, get) => ({
           questionTitle: q.title,
           questionText: q.question_text,
           evaluationPlan: q.evaluation_plan,
+          questionTimeLimit: q.time_limit_minutes || 0,
         });
       }
     } catch (err) {
