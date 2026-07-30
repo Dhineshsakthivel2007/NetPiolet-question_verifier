@@ -36,10 +36,11 @@ const DeviceNode = memo(({ id, data, selected }) => {
         position: 'relative',
       }}
     >
-      {/* PC & Server have ONLY 1 single handle dot (at the bottom). Upper dot is removed. */}
-      {/* Routers and Switches have 4 handle dots (top, bottom, left, right). */}
       {isEndDevice ? (
-        <Handle type="source" position={Position.Bottom} style={handleStyle} id="bottom" isConnectable={true} />
+        <>
+          <Handle type="source" position={Position.Left} style={handleStyle} id="port" isConnectable={true} />
+          <Handle type="target" position={Position.Left} style={handleStyle} id="port" isConnectable={false} />
+        </>
       ) : (
         <>
           <Handle type="target" position={Position.Top} style={handleStyle} id="top" isConnectable={true} />
@@ -48,7 +49,6 @@ const DeviceNode = memo(({ id, data, selected }) => {
           <Handle type="source" position={Position.Right} style={handleStyle} id="right" isConnectable={true} />
         </>
       )}
-
       {/* Device icon */}
       <div style={{ fontSize: 32, marginBottom: 4, lineHeight: 1 }}>
         {def?.icon || '📦'}

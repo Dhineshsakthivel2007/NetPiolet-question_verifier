@@ -352,9 +352,9 @@ export default function StudentTestPage() {
           </div>
         </div>
         {allRulesChecked ? (
-          <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 20, fontSize: 17, padding: '14px 24px', animation: 'slideUp 0.3s ease' }}
+          <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 20, fontSize: 17, padding: '14px 24px', animation: 'slideUp 0.3s ease', justifyContent: 'center'}}
             onClick={handleStartTest} disabled={loading}>
-            {loading ? '⏳ Loading test...' : '🚀 Start Test'}
+            {loading ? '⏳ Loading test...' : '-> Start Test'}
           </button>
         ) : (
           <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-muted)' }}>☝️ Accept all {EXAM_RULES.length} rules to proceed</p>

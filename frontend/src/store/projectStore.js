@@ -2,6 +2,32 @@ import { create } from 'zustand';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 import { getDeviceDefaults } from '../features/devices/DeviceRegistry.js';
 
+/**
+ * Auto-detect cable type based on Cisco norms:
+ *  - Switch ↔ PC/Server     → Straight-Through (copper-straight)
+ *  - Switch ↔ Router        → Straight-Through (copper-straight)
+ *  - Switch ↔ Switch        → Crossover (copper-cross)
+ *  - Router ↔ Router        → Crossover (copper-cross)
+ *  - PC ↔ PC                → Crossover (copper-cross)
+ *  - PC ↔ Router            → Crossover (copper-cross)
+ *  - Anything else           → Straight-Through
+ */
+function autoCableType(typeA, typeB) {
+  const pair = [typeA, typeB].sort().join('-');
+  // Same type → crossover
+  if (typeA === typeB && (typeA === 'switch' || typeA === 'router' || typeA === 'pc' || typeA === 'server')) {
+    return 'copper-cross';
+  }
+  // PC/Server ↔ Router → crossover (direct connection without switch)
+  if (pair === 'pc-router' || pair === 'router-server') {
+    return 'copper-cross';
+  }
+  // Switch ↔ anything else → straight-through
+  return 'copper-straight';
+}
+
+export { autoCableType };
+
 let saveTimer = null;
 
 const useProjectStore = create((set, get) => ({
@@ -68,6 +94,9 @@ const useProjectStore = create((set, get) => ({
     const sourcePort = pickPort(srcNode);
     const targetPort = pickPort(tgtNode);
 
+    // ── Auto cable type based on Cisco norms ──
+    const cableType = autoCableType(srcNode.data?.type, tgtNode.data?.type);
+
     const edge = {
       id: `cable-${Date.now()}`,
       source: connection.source,
@@ -76,13 +105,134 @@ const useProjectStore = create((set, get) => ({
       targetHandle: connection.targetHandle || 'top',
       type: 'cable',
       data: {
-        cableType: 'copper-straight',
+        cableType,
         sourcePort,
         targetPort,
       },
     };
 
     set({ edges: addEdge(edge, updatedEdges) });
+    get()._autoSave();
+  },
+
+  // Cable / Edge Operations
+  activeEdgeMenu: null,
+  reconnectingCable: null,
+
+  setActiveEdgeMenu: (menu) => set({ activeEdgeMenu: menu }),
+
+  removeEdge: (edgeId) => {
+    set(s => ({
+      edges: s.edges.filter(e => e.id !== edgeId),
+      activeEdgeMenu: null,
+      reconnectingCable: s.reconnectingCable?.edgeId === edgeId ? null : s.reconnectingCable,
+    }));
+    get()._autoSave();
+  },
+
+  startReconnectingCable: (edgeId, side = 'target') => {
+    const edge = get().edges.find(e => e.id === edgeId);
+    if (!edge) return;
+    const anchorNodeId = side === 'target' ? edge.source : edge.target;
+    set({
+      reconnectingCable: { edgeId, anchorNodeId, side, oldTargetNodeId: side === 'target' ? edge.target : edge.source },
+      activeEdgeMenu: null,
+    });
+  },
+
+  cancelReconnectingCable: () => {
+    set({ reconnectingCable: null, activeEdgeMenu: null });
+  },
+
+  reconnectEdgeToNode: (edgeId, newTargetNodeId, side = 'target') => {
+    const { nodes, edges } = get();
+    const edge = edges.find(e => e.id === edgeId);
+    if (!edge) return;
+
+    const anchorNodeId = side === 'target' ? edge.source : edge.target;
+    if (anchorNodeId === newTargetNodeId) return; // Cannot connect to self
+
+    const anchorNode = nodes.find(n => n.id === anchorNodeId);
+    const targetNode = nodes.find(n => n.id === newTargetNodeId);
+    if (!anchorNode || !targetNode) return;
+
+    const isEndDevice = (type) => type === 'pc' || type === 'server';
+    let updatedEdges = edges.filter(e => e.id !== edgeId);
+
+    if (isEndDevice(targetNode.data?.type)) {
+      updatedEdges = updatedEdges.filter(e => e.source !== newTargetNodeId && e.target !== newTargetNodeId);
+    }
+
+    const usedPorts = (deviceId) => {
+      const used = new Set();
+      for (const e of updatedEdges) {
+        if (e.source === deviceId) used.add(e.data?.sourcePort || '');
+        if (e.target === deviceId) used.add(e.data?.targetPort || '');
+      }
+      return used;
+    };
+
+    const pickPort = (node) => {
+      const ifaces = Object.keys(node.data?.interfaces || {});
+      const used = usedPorts(node.id);
+      return ifaces.find(p => !used.has(p)) || ifaces[0] || 'FastEthernet0';
+    };
+
+    const anchorPort = side === 'target' ? (edge.data?.sourcePort || pickPort(anchorNode)) : pickPort(anchorNode);
+    const targetPort = pickPort(targetNode);
+
+    // Compute optimal handle IDs based on relative device positions
+    const dx = (targetNode.position?.x || 0) - (anchorNode.position?.x || 0);
+    const dy = (targetNode.position?.y || 0) - (anchorNode.position?.y || 0);
+
+    let srcHandle = 'bottom';
+    let tgtHandle = 'top';
+
+    if (Math.abs(dy) > Math.abs(dx)) {
+      if (dy > 0) {
+        srcHandle = 'bottom';
+        tgtHandle = 'top';
+      } else {
+        srcHandle = 'top';
+        tgtHandle = 'bottom';
+      }
+    } else {
+      if (dx > 0) {
+        srcHandle = 'right';
+        tgtHandle = 'left';
+      } else {
+        srcHandle = 'left';
+        tgtHandle = 'right';
+      }
+    }
+
+    const newEdge = {
+      id: edgeId,
+      source: side === 'target' ? anchorNodeId : newTargetNodeId,
+      target: side === 'target' ? newTargetNodeId : anchorNodeId,
+      sourceHandle: side === 'target' ? srcHandle : tgtHandle,
+      targetHandle: side === 'target' ? tgtHandle : srcHandle,
+      type: 'cable',
+      data: {
+        cableType: edge.data?.cableType || 'copper-straight',
+        sourcePort: side === 'target' ? anchorPort : targetPort,
+        targetPort: side === 'target' ? targetPort : anchorPort,
+      },
+    };
+
+    set({
+      edges: [...updatedEdges, newEdge],
+      activeEdgeMenu: null,
+      reconnectingCable: null,
+    });
+    get()._autoSave();
+  },
+
+  updateEdgeCableType: (edgeId, cableType) => {
+    set(s => ({
+      edges: s.edges.map(e => e.id === edgeId ? { ...e, data: { ...e.data, cableType } } : e),
+      // Keep menu open so user sees the wire color change live
+    }));
     get()._autoSave();
   },
 

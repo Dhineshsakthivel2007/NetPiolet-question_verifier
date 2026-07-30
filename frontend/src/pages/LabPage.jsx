@@ -161,8 +161,8 @@ export default function LabPage() {
                 ) : (
                   <>
                     <div style={{ fontSize: 44, marginBottom: 6 }}>📝</div>
-                    <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Lab Feedback</h2>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: '#6B7280', marginBottom: 8 }}>How was this lab?</p>
+                    <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Assesment Feedback</h2>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#6B7280', marginBottom: 8 }}>How was this Assessment?</p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 20 }}>
                       {[1, 2, 3, 4, 5].map(n => (
                         <button key={n} onClick={() => setFeedback(f => ({ ...f, rating: n }))}
@@ -217,79 +217,44 @@ export default function LabPage() {
                 </span>
 
                 {/* Hidden Test Cases Section */}
-                <div style={{ margin: '18px 0 12px', textAlign: 'left' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-                    <span>🧪 Hidden Test Cases</span>
-                    <span style={{ color: passedCount === totalCount && totalCount > 0 ? '#10B981' : '#EF4444' }}>
-                      {passedCount} / {totalCount} Passed
-                    </span>
-                  </div>
-
-                  <div style={{ background: '#F0F1F6', borderRadius: 100, height: 8, overflow: 'hidden', marginBottom: 10 }}>
-                    <div style={{
-                      width: `${totalCount > 0 ? (passedCount / totalCount) * 100 : 0}%`,
-                      height: '100%',
-                      background: passedCount === totalCount ? '#10B981' : '#F59E0B',
-                      borderRadius: 100,
-                      transition: 'width 0.5s ease'
-                    }} />
-                  </div>
-
-                  <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}>
-                    {checks.length > 0 ? (
-                      checks.map((c, i) => (
-                        <div key={i} style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '8px 12px', borderRadius: 8, fontSize: 13,
-                          background: c.passed ? 'rgba(16,185,129,0.06)' : 'rgba(239,68,68,0.06)',
-                          border: `1px solid ${c.passed ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-                            <span style={{ fontWeight: 800, color: c.passed ? '#10B981' : '#EF4444' }}>{c.passed ? '✓' : '✗'}</span>
-                            <span style={{ fontWeight: 600, color: '#1F2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {c.check_description || `Hidden Test Case ${i + 1}`}
-                            </span>
-                          </div>
-                          <span style={{
-                            fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
-                            background: c.passed ? '#D1FAE5' : '#FECACA',
-                            color: c.passed ? '#065F46' : '#991B1B',
-                            flexShrink: 0
-                          }}>
-                            {c.passed ? 'Passed' : 'Failed'}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <p style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center' }}>No test cases executed</p>
-                    )}
+                <div style={{ margin: '18px 0 16px', textAlign: 'left' }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: '#4B5563', marginBottom: 8 }}>
+                    Hidden Test Cases ({passedCount}/{totalCount})
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {checks.map((c, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                        borderRadius: 8, background: c.passed ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                        border: `1px solid ${c.passed ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`
+                      }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: c.passed ? '#10B981' : '#EF4444' }}>{c.passed ? '✓' : '✗'}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>Hidden Test Case {i + 1}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: c.passed ? '#10B981' : '#EF4444' }}>{c.passed ? 'Passed' : 'Failed'}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                {submitError && <p style={{ color: '#EF4444', fontSize: 13, marginTop: 10 }}>{submitError}</p>}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-                  <button className="btn btn-primary" style={{ width: '100%', fontSize: 14 }}
-                    onClick={() => useProjectStore.setState({ submitResult: null })}>
-                    ✏️ Continue Editing
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+                  <button
+                    className="btn btn-secondary btn-lg"
+                    style={{ width: '100%', fontSize: 14, padding: '12px 18px', fontWeight: 700, border: '1.5px solid #7C5CFC', color: '#7C5CFC', background: '#F5F3FF' }}
+                    onClick={() => useProjectStore.setState({ submitResult: null })}
+                  >
+                    🛠️ Continue Editing
                   </button>
-                  <button className="btn btn-secondary" style={{ width: '100%', fontSize: 14 }}
-                    onClick={() => {
-                      finishProject();
-                      setShowFeedback(true);
-                    }}>
-                    🏁 Finish Test
+                  <button
+                    className="btn btn-primary btn-lg"
+                    style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800 }}
+                    onClick={() => setShowFeedback(true)}
+                  >
+                    Finish Test & Go to Feedback →
                   </button>
                 </div>
               </>
             )}
           </div>
-        </div>
-      )}
-
-      {submitError && !evalResult && (
-        <div style={{ padding: '8px 16px', background: '#FEF2F2', borderBottom: '1px solid #FECACA', color: '#EF4444', fontSize: 13 }}>
-          ⚠️ {submitError}
         </div>
       )}
 
@@ -309,53 +274,50 @@ export default function LabPage() {
                 height: termHeight, borderTop: '2px solid #7C5CFC',
                 display: 'flex', flexDirection: 'column', background: '#1E1E2E',
               }}>
-                {/* Terminal tabs */}
+                {/* Terminal Tabs */}
                 <div style={{
-                  display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px',
-                  background: '#181825', borderBottom: '1px solid #313244',
+                  height: 36, display: 'flex', alignItems: 'center', background: '#181825',
+                  padding: '0 8px', gap: 4, borderBottom: '1px solid #313244',
                 }}>
                   {openTerminals.map(devId => {
-                    const n = nodes.find(nd => nd.id === devId);
-                    const isActive = devId === activeTerminal;
+                    const devNode = nodes.find(n => n.id === devId);
+                    const devName = devNode?.data?.hostname || devId;
+                    const isActive = activeTerminal === devId;
                     return (
                       <div
                         key={devId}
                         onClick={() => setActiveTerminal(devId)}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '6px 12px', fontSize: 12, fontWeight: 600,
-                          color: isActive ? '#CDD6F4' : '#6C7086',
-                          background: isActive ? '#313244' : 'transparent',
-                          borderRadius: '8px 8px 0 0',
-                          cursor: 'pointer', marginTop: 4,
-                          borderBottom: isActive ? '2px solid #7C5CFC' : '2px solid transparent',
-                          transition: 'all 0.15s',
+                          padding: '4px 10px', borderRadius: '6px 6px 0 0',
+                          background: isActive ? '#1E1E2E' : 'transparent',
+                          color: isActive ? '#CD32F4' : '#A6ADC8',
+                          fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          borderTop: isActive ? '2px solid #CD32F4' : '2px solid transparent',
                         }}
                       >
-                        <span>🖥 {n?.data?.hostname || devId}</span>
-                        <button onClick={(e) => { e.stopPropagation(); handleCloseTerminal(devId); }} style={{
-                          background: 'none', border: 'none', color: '#6C7086',
-                          cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1,
-                        }}>×</button>
+                        <span>🖥️ {devName}</span>
+                        <span
+                          onClick={(e) => { e.stopPropagation(); handleCloseTerminal(devId); }}
+                          style={{ fontSize: 12, opacity: 0.6, cursor: 'pointer', padding: '0 2px' }}
+                        >✕</span>
                       </div>
                     );
                   })}
-                  {/* Resize handle */}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                    <button onClick={() => setTermHeight(h => Math.min(h + 50, 500))} style={{ background: 'none', border: 'none', color: '#6C7086', cursor: 'pointer', fontSize: 14 }}>▲</button>
-                    <button onClick={() => setTermHeight(h => Math.max(h - 50, 150))} style={{ background: 'none', border: 'none', color: '#6C7086', cursor: 'pointer', fontSize: 14 }}>▼</button>
+                    <button
+                      onClick={() => setTermHeight(h => h === 250 ? 400 : 250)}
+                      style={{ background: 'none', border: 'none', color: '#A6ADC8', cursor: 'pointer', fontSize: 12 }}
+                    >
+                      {termHeight === 250 ? '▲ Expand' : '▼ Shrink'}
+                    </button>
                   </div>
                 </div>
-                {/* Terminal content */}
-                <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+
+                {/* Active Terminal Content */}
+                <div style={{ flex: 1, position: 'relative' }}>
                   {openTerminals.map(devId => (
-                    <div
-                      key={devId}
-                      style={{
-                        position: 'absolute', inset: 0,
-                        display: devId === activeTerminal ? 'block' : 'none',
-                      }}
-                    >
+                    <div key={devId} style={{ display: activeTerminal === devId ? 'block' : 'none', height: '100%' }}>
                       <CliTerminal deviceId={devId} />
                     </div>
                   ))}

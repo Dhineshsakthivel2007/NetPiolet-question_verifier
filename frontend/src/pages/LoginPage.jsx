@@ -106,8 +106,8 @@ export default function LoginPage() {
             </button>
           )}
 
-          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--text-muted)' }}>
-            Contact your administrator to get an account
+          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 16, color: 'var(--text-muted)' }}>
+            If any login issues Contact your administrator
           </p>
         </div>
       </div>
