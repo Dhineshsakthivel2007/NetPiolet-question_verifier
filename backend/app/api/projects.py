@@ -122,11 +122,8 @@ def finish_project(project_id: str, db: Session = Depends(get_db), user: User = 
 
     now = datetime.now()
 
-    # Upsert single evaluation record per project/candidate
-    existing_eval = db.query(Evaluation).filter(
-        (Evaluation.project_id == project.id) |
-        ((Evaluation.student_id == user.id) & (Evaluation.question_id == project.question_id))
-    ).first()
+    # Upsert single evaluation record per project
+    existing_eval = db.query(Evaluation).filter(Evaluation.project_id == project.id).first()
 
     if existing_eval:
         existing_eval.evaluation_plan = plan.model_dump()

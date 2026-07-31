@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api import auth, topics, questions, evaluations, reports, student, projects
+from app.api import auth, levels, topics, questions, evaluations, reports, student, projects
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(auth.router)
+api_router.include_router(levels.router)
 api_router.include_router(topics.router)
 api_router.include_router(questions.router)
 api_router.include_router(evaluations.router)

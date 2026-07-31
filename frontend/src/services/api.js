@@ -39,8 +39,14 @@ export const api = {
   adminCreateUser: (data) => request('/auth/users/create', { method: 'POST', body: JSON.stringify(data) }),
   adminBulkUploadUsers: (formData) => request('/auth/users/bulk-upload', { method: 'POST', body: formData, headers: {} }),
 
+  // Levels
+  getLevels: () => request('/levels'),
+  createLevel: (data) => request('/levels', { method: 'POST', body: JSON.stringify(data) }),
+  updateLevel: (id, data) => request(`/levels/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLevel: (id) => request(`/levels/${id}`, { method: 'DELETE' }),
+
   // Topics
-  getTopics: () => request('/topics'),
+  getTopics: (levelId) => request(`/topics${levelId ? '?level_id=' + levelId : ''}`),
   createTopic: (data) => request('/topics', { method: 'POST', body: JSON.stringify(data) }),
   updateTopic: (id, data) => request(`/topics/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTopic: (id) => request(`/topics/${id}`, { method: 'DELETE' }),

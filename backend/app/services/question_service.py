@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 from app.models.question import Question
+from app.models.evaluation import Evaluation
+from app.models.report import Report
+from app.models.test_session import TestSession
+from app.models.project import Project
 from app.schemas import QuestionCreate, QuestionUpdate
 
 
@@ -14,8 +18,10 @@ def create_question(db: Session, data: QuestionCreate) -> Question:
 
 
 def get_questions(db: Session, topic_id: str | None = None, week: int | None = None,
-                  semester: str | None = None, is_active: bool | None = None) -> list[Question]:
+                  semester: str | None = None, is_active: bool | None = None,
+                  level_id: str | None = None) -> list[Question]:
     query = db.query(Question)
+    if level_id: query = query.filter(Question.level_id == level_id)
     if topic_id: query = query.filter(Question.topic_id == topic_id)
     if week: query = query.filter(Question.week_number == week)
     if semester: query = query.filter(Question.semester == semester)
@@ -47,5 +53,15 @@ def save_evaluation_plan(db: Session, question_id: str, plan: dict) -> Question 
 def delete_question(db: Session, question_id: str) -> bool:
     q = get_question(db, question_id)
     if not q: return False
-    db.delete(q); db.commit()
+
+    # Delete reports for evaluations belonging to this question
+    evals = db.query(Evaluation).filter(Evaluation.question_id == question_id).all()
+    for ev in evals:
+        db.query(Report).filter(Report.evaluation_id == ev.id).delete(synchronize_session=False)
+        db.delete(ev)
+
+    db.query(TestSession).filter(TestSession.question_id == question_id).delete(synchronize_session=False)
+    db.query(Project).filter(Project.question_id == question_id).delete(synchronize_session=False)
+    db.delete(q)
+    db.commit()
     return True

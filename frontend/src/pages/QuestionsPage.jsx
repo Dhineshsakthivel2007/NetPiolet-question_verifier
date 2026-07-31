@@ -5,29 +5,50 @@ import { api } from '../services/api.js';
 export default function QuestionsPage() {
   const [questions, setQuestions] = useState([]);
   const [topics, setTopics] = useState([]);
+  const [levels, setLevels] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3 });
+  const [form, setForm] = useState({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3, level_id: '' });
   const [loading, setLoading] = useState(false);
   const [filterTopic, setFilterTopic] = useState('');
+  const [filterLevel, setFilterLevel] = useState('');
   const navigate = useNavigate();
 
   const load = async () => {
-    const [q, t] = await Promise.all([
-      api.getQuestions(filterTopic ? { topic_id: filterTopic } : {}),
-      api.getTopics(),
+    const params = {};
+    if (filterTopic) params.topic_id = filterTopic;
+    if (filterLevel) params.level_id = filterLevel;
+    const [q, t, l] = await Promise.all([
+      api.getQuestions(params),
+      api.getTopics(filterLevel || undefined),
+      api.getLevels(),
     ]);
-    setQuestions(q); setTopics(t);
+    setQuestions(q); setTopics(t); setLevels(l);
   };
-  useEffect(() => { load(); }, [filterTopic]);
+  useEffect(() => { load(); }, [filterTopic, filterLevel]);
+
+  // When modal level changes, reload topics for that level
+  const [modalTopics, setModalTopics] = useState([]);
+  useEffect(() => {
+    if (showModal) {
+      api.getTopics(form.level_id || undefined).then(t => setModalTopics(t));
+    }
+  }, [form.level_id, showModal]);
 
   const handleCreate = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      const q = await api.createQuestion(form);
-      setShowModal(false); setForm({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3 });
+      const payload = { ...form };
+      if (!payload.level_id) delete payload.level_id;
+      const q = await api.createQuestion(payload);
+      setShowModal(false); setForm({ topic_id: '', title: '', question_text: '', week_number: 1, semester: '', academic_year: '', time_limit_minutes: 60, max_attempts: 3, level_id: '' });
       navigate(`/questions/${q.id}`);
     } catch (err) { alert(err.message); }
     finally { setLoading(false); }
+  };
+
+  const handleLevelChange = (levelId) => {
+    setFilterLevel(levelId);
+    setFilterTopic(''); // Reset topic filter when level changes
   };
 
   return (
@@ -37,8 +58,12 @@ export default function QuestionsPage() {
         <p>Create and manage weekly lab questions</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Question</button>
+        <select className="form-select" value={filterLevel} onChange={e => handleLevelChange(e.target.value)} style={{ width: 180 }}>
+          <option value="">All Levels</option>
+          {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
         <select className="form-select" value={filterTopic} onChange={e => setFilterTopic(e.target.value)} style={{ width: 200 }}>
           <option value="">All Topics</option>
           {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -53,12 +78,19 @@ export default function QuestionsPage() {
         </div>
       ) : (
         <table className="data-table">
-          <thead><tr><th>Week</th><th>Title</th><th>Topic</th><th>Plan</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Week</th><th>Title</th><th>Level</th><th>Topic</th><th>Plan</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {questions.map(q => (
               <tr key={q.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/questions/${q.id}`)}>
                 <td><strong>W{q.week_number}</strong></td>
                 <td>{q.title}</td>
+                <td>
+                  {q.level_id ? (
+                    <span className="badge" style={{ background: 'rgba(124,92,252,0.1)', color: '#7C5CFC', fontSize: 11 }}>
+                      {levels.find(l => l.id === q.level_id)?.name || '—'}
+                    </span>
+                  ) : <span style={{ color: '#9CA3AF', fontSize: 12 }}>—</span>}
+                </td>
                 <td><span className="badge badge-topic">{topics.find(t => t.id === q.topic_id)?.name || '—'}</span></td>
                 <td>{q.evaluation_plan ? <span className="badge badge-pass">Ready</span> : <span className="badge badge-pending">No Plan</span>}</td>
                 <td>{q.is_active ? <span className="badge badge-pass">Active</span> : <span className="badge badge-fail">Inactive</span>}</td>
@@ -74,12 +106,21 @@ export default function QuestionsPage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h3>Create Question</h3>
             <form onSubmit={handleCreate}>
-              <div className="form-group">
-                <label className="form-label">Topic</label>
-                <select className="form-select" value={form.topic_id} onChange={e => setForm({...form, topic_id: e.target.value})} required>
-                  <option value="">Select topic...</option>
-                  {topics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Level</label>
+                  <select className="form-select" value={form.level_id} onChange={e => setForm({...form, level_id: e.target.value, topic_id: ''})}>
+                    <option value="">No Level</option>
+                    {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Topic</label>
+                  <select className="form-select" value={form.topic_id} onChange={e => setForm({...form, topic_id: e.target.value})} required>
+                    <option value="">Select topic...</option>
+                    {modalTopics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="form-group">
                 <label className="form-label">Title</label>

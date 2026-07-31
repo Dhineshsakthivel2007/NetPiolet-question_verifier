@@ -14,8 +14,8 @@ router = APIRouter(prefix="/topics", tags=["Topics"])
 
 
 @router.get("", response_model=list[TopicResponse])
-def list_topics(db: Session = Depends(get_db)):
-    return topic_service.get_topics(db)
+def list_topics(level_id: str | None = None, db: Session = Depends(get_db)):
+    return topic_service.get_topics(db, level_id=level_id)
 
 
 @router.post("", response_model=TopicResponse, status_code=201)

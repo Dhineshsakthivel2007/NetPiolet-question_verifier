@@ -9,6 +9,7 @@ from app.models.base import Base, TimestampMixin
 class Question(TimestampMixin, Base):
     __tablename__ = "questions"
 
+    level_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("levels.id"), nullable=True, index=True)
     topic_id: Mapped[str] = mapped_column(String(36), ForeignKey("topics.id"), index=True)
     title: Mapped[str] = mapped_column(String(500))
     question_text: Mapped[str] = mapped_column(Text)

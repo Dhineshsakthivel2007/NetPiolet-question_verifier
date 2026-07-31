@@ -3,6 +3,7 @@ import Layout from './components/Layout.jsx';
 import StudentLayout from './components/StudentLayout.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
+import LevelsPage from './pages/LevelsPage.jsx';
 import TopicsPage from './pages/TopicsPage.jsx';
 import QuestionsPage from './pages/QuestionsPage.jsx';
 import QuestionDetailPage from './pages/QuestionDetailPage.jsx';
@@ -48,6 +49,7 @@ export default function App() {
         {/* Admin/Professor Routes */}
         <Route path="/" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><Layout /></ProtectedRoute>}>
           <Route index element={<DashboardPage />} />
+          <Route path="levels" element={<LevelsPage />} />
           <Route path="topics" element={<TopicsPage />} />
           <Route path="questions" element={<QuestionsPage />} />
           <Route path="questions/:id" element={<QuestionDetailPage />} />

@@ -252,6 +252,8 @@ def report_warning(
     if not session:
         now = datetime.now(timezone.utc)
         question = db.query(Question).filter(Question.id == question_id).first()
+        if not question:
+            raise HTTPException(404, "Question not found")
         time_limit = question.time_limit_minutes if question else 60
         expires = now + timedelta(minutes=time_limit) if time_limit > 0 else None
         session = TestSession(

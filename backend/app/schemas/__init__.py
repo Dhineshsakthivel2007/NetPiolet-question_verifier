@@ -34,16 +34,35 @@ class UserApproveRequest(BaseModel):
 class UserRoleRequest(BaseModel):
     role: str
 
+# --- Level ---
+class LevelCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = ""
+    order: int = 0
+
+class LevelUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    order: int | None = None
+
+class LevelResponse(BaseModel):
+    id: str; name: str; slug: str; description: str; order: int
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
 # --- Topic ---
 class TopicCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str = ""
+    level_id: str | None = None
 
 class TopicUpdate(BaseModel):
     name: str | None = None; description: str | None = None
+    level_id: str | None = None
 
 class TopicResponse(BaseModel):
     id: str; name: str; slug: str; description: str; created_at: datetime
+    level_id: str | None = None
     model_config = {"from_attributes": True}
 
 # --- Question ---
@@ -56,12 +75,14 @@ class QuestionCreate(BaseModel):
     academic_year: str = ""
     time_limit_minutes: int = 0
     max_attempts: int = 3
+    level_id: str | None = None
 
 class QuestionUpdate(BaseModel):
     title: str | None = None; question_text: str | None = None
     week_number: int | None = None; semester: str | None = None
     academic_year: str | None = None; is_active: bool | None = None
     time_limit_minutes: int | None = None; max_attempts: int | None = None
+    level_id: str | None = None
 
 class QuestionResponse(BaseModel):
     id: str; topic_id: str; title: str; question_text: str
@@ -69,6 +90,7 @@ class QuestionResponse(BaseModel):
     evaluation_plan: dict | None = None; is_active: bool
     created_by: str | None = None
     time_limit_minutes: int = 0; max_attempts: int = 3
+    level_id: str | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 

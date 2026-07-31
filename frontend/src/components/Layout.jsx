@@ -4,6 +4,7 @@ import { api } from '../services/api.js';
 
 const navItems = [
   { to: '/', icon: '📊', label: 'Dashboard' },
+  { to: '/levels', icon: '🎯', label: 'Levels' },
   { to: '/topics', icon: '📁', label: 'Topics' },
   { to: '/questions', icon: '❓', label: 'Questions' },
   { to: '/evaluate', icon: '⚡', label: 'Evaluate' },

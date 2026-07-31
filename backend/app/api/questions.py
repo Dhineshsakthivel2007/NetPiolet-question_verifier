@@ -17,9 +17,10 @@ router = APIRouter(prefix="/questions", tags=["Questions"])
 def list_questions(
     topic_id: str | None = None, week: int | None = None,
     semester: str | None = None, is_active: bool | None = None,
+    level_id: str | None = None,
     db: Session = Depends(get_db),
 ):
-    return question_service.get_questions(db, topic_id, week, semester, is_active)
+    return question_service.get_questions(db, topic_id, week, semester, is_active, level_id=level_id)
 
 
 @router.post("", response_model=QuestionResponse, status_code=201)

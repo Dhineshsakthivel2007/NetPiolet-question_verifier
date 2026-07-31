@@ -26,5 +26,5 @@ class Evaluation(TimestampMixin, Base):
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
 
     question = relationship("Question", back_populates="evaluations")
-    report = relationship("Report", back_populates="evaluation", uselist=False)
+    report = relationship("Report", back_populates="evaluation", uselist=False, cascade="all, delete-orphan")
     project = relationship("Project")
