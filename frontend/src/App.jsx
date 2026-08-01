@@ -11,6 +11,7 @@ import EvaluatePage from './pages/EvaluatePage.jsx';
 import ResultsPage from './pages/ResultsPage.jsx';
 import ResultDetailPage from './pages/ResultDetailPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
+import SessionsPage from './pages/SessionsPage.jsx';
 import StudentTestPage from './pages/StudentTestPage.jsx';
 import StudentResultsPage from './pages/StudentResultsPage.jsx';
 import LabPage from './pages/LabPage.jsx';
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="evaluate" element={<EvaluatePage />} />
           <Route path="results" element={<ResultsPage />} />
           <Route path="results/:id" element={<ResultDetailPage />} />
+          <Route path="sessions" element={<SessionsPage />} />
           <Route path="admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminPage /></ProtectedRoute>} />
         </Route>
 

@@ -1,7 +1,7 @@
 """Pydantic schemas for all API request/response models."""
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,9 @@ class UserCreate(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=6)
     role: str = "student"
+    roll_number: str | None = None
+    session_slot: str | None = None
+    level_id: str | None = None
 
 class UserLogin(BaseModel):
     username: str
@@ -22,6 +25,11 @@ class GoogleLoginRequest(BaseModel):
 class UserResponse(BaseModel):
     id: str; username: str; email: str; role: str; is_active: bool
     avatar_url: str = ""; created_at: datetime
+    roll_number: str | None = None
+    session_slot: str | None = None
+    level_id: str | None = None
+    level_name: str | None = None
+    attendance: str = "Absent"
     model_config = {"from_attributes": True}
 
 class TokenResponse(BaseModel):
@@ -103,6 +111,7 @@ class PlanUpdateRequest(BaseModel):
 # --- Evaluation ---
 class EvaluationResponse(BaseModel):
     id: str; question_id: str; student_name: str; student_id: str
+    roll_number: str | None = None; session_slot: str | None = None
     pkt_file_path: str | None = None; xml_file_path: str | None = None
     evaluation_plan: dict | None = None; results: list | dict | None = None
     overall_score: float; max_score: float = 100.0; passed: bool; evaluated_at: datetime | None = None
@@ -125,6 +134,8 @@ class StudentQuestionResponse(BaseModel):
     topic_name: str = ""; time_limit_minutes: int = 0
     max_attempts: int = 3; week_number: int = 1
 
+from pydantic import BaseModel, Field, field_serializer
+
 class TestSessionResponse(BaseModel):
     id: str; student_id: str; question_id: str
     started_at: datetime; expires_at: datetime | None = None
@@ -133,9 +144,20 @@ class TestSessionResponse(BaseModel):
     proctor_locked: bool = False; warning_count: int = 0
     model_config = {"from_attributes": True}
 
+    @field_serializer("started_at", "expires_at", "created_at")
+    def serialize_datetime(self, dt: datetime | None) -> str | None:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
 class StudentTestResultResponse(BaseModel):
     """Result view for students — hides detailed check info."""
     passed: bool; score: float; max_score: float
     check_count: int; passed_count: int
     can_retry: bool; attempts_remaining: int
     message: str = ""
+
+class UnlockSessionRequest(BaseModel):
+    extend_minutes: int = 20

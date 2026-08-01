@@ -21,6 +21,8 @@ class Evaluation(TimestampMixin, Base):
     max_score: Mapped[float] = mapped_column(Float, default=100.0)
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    roll_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    session_slot: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"), nullable=True, index=True)

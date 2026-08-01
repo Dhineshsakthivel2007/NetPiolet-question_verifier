@@ -30,6 +30,9 @@ export default function LabPage() {
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [warningReason, setWarningReason] = useState('');
   const [terminatedByProctor, setTerminatedByProctor] = useState(false);
+  const [showUnlockedNotice, setShowUnlockedNotice] = useState(false);
+  const violationCooldownRef = useRef(false);
+  const wasLockedByProctorRef = useRef(false);
 
   const loadProject = useProjectStore(s => s.loadProject);
   const submitProject = useProjectStore(s => s.submitProject);
@@ -49,6 +52,17 @@ export default function LabPage() {
     if (projectId) loadProject(projectId);
   }, [projectId, loadProject]);
 
+  // Save project state synchronously before page refresh / unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      useProjectStore.getState().saveProjectSync();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
   // Auto-select active terminal when a new one opens
   useEffect(() => {
     if (openTerminals.length > 0 && (!activeTerminal || !openTerminals.includes(activeTerminal))) {
@@ -61,7 +75,7 @@ export default function LabPage() {
 
   // Countdown Timer & Admin Unlock Sync Effect
   useEffect(() => {
-    if (!questionId || !questionTimeLimit || questionTimeLimit <= 0) {
+    if (!questionId) {
       setTimeLeft(null);
       return;
     }
@@ -71,41 +85,61 @@ export default function LabPage() {
 
     const checkSessionAndInitTimer = async () => {
       let expiry = null;
+      let sess = null;
 
-      const role = localStorage.getItem('role');
-      if (role === 'student') {
-        try {
-          const sess = await api.startTest(questionId);
-          if (!isMounted) return;
+      try {
+        sess = await api.startTest(questionId);
+        if (!isMounted) return;
 
-          if (sess) {
-            if (!sess.proctor_locked) {
-              // Admin unlocked the session! Reset local state
-              setWarningCount(sess.warning_count || 0);
-              setTerminatedByProctor(false);
-              setShowWarningModal(false);
-              setTimerExpired(false);
-              if (!sess.is_completed) {
-                useProjectStore.setState({ submitResult: null });
-              }
-            } else {
-              setWarningCount(3);
-              setTerminatedByProctor(true);
-            }
-
-            if (sess.expires_at) {
-              const parsed = new Date(sess.expires_at).getTime();
-              if (!isNaN(parsed)) expiry = parsed;
+        if (sess) {
+          if (sess.proctor_locked) {
+            // Backend says session is locked
+            setWarningCount(3);
+            setTerminatedByProctor(true);
+            setShowWarningModal(false);
+            wasLockedByProctorRef.current = true;
+          } else if (wasLockedByProctorRef.current) {
+            // Admin explicitly unlocked this session in the backend DB!
+            wasLockedByProctorRef.current = false;
+            setWarningCount(0);
+            setShowWarningModal(false);
+            setTimerExpired(false);
+            setShowUnlockedNotice(true);
+            setTerminatedByProctor(false);
+            violationCooldownRef.current = false;
+            if (!sess.is_completed) {
+              useProjectStore.setState({ submitResult: null });
             }
           }
-        } catch (err) {
-          console.warn('Student test session fetch:', err.message);
+
+          if (sess.is_completed) {
+            setTimerExpired(true);
+            setTimeLeft(0);
+            return;
+          }
+
+          if (sess.expires_at) {
+            const rawStr = String(sess.expires_at).trim();
+            const utcStr = (rawStr.endsWith('Z') || rawStr.includes('+')) ? rawStr : rawStr + 'Z';
+            const parsed = new Date(utcStr).getTime();
+            if (!isNaN(parsed) && parsed > Date.now()) {
+              expiry = parsed;
+              setTimerExpired(false);
+            } else {
+              setTimerExpired(true);
+              setTimeLeft(0);
+              return;
+            }
+          }
         }
+      } catch (err) {
+        console.warn('Student test session fetch:', err.message);
       }
 
-      // Fallback / Admin / Professor testing: Use session start time
-      if (!expiry && questionTimeLimit > 0) {
-        const sessionKey = `lab_start_${questionId}`;
+      // Fallback only if no server session (standalone offline mode)
+      if (!sess && !expiry && questionTimeLimit > 0) {
+        const username = localStorage.getItem('username') || 'user';
+        const sessionKey = `lab_start_${username}_${questionId}`;
         let startTs = parseInt(sessionStorage.getItem(sessionKey) || '0');
         if (!startTs || isNaN(startTs)) {
           startTs = Date.now();
@@ -124,8 +158,23 @@ export default function LabPage() {
           if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
           const store = useProjectStore.getState();
           if (!store.submitResult) {
-            store.submitProject().catch(() => {});
+            store.submitProject().catch((err) => {
+              console.error("Auto-submit failed on timer expiration:", err);
+              useProjectStore.setState({ 
+                submitResult: { 
+                  passed: false, 
+                  score: 0, 
+                  max_score: 100,
+                  passed_count: 0,
+                  check_count: 0,
+                  error: 'Evaluation failed or incomplete' 
+                },
+                submitting: false 
+              });
+            });
           }
+        } else {
+          setTimerExpired(false);
         }
       };
 
@@ -136,18 +185,15 @@ export default function LabPage() {
 
     checkSessionAndInitTimer();
 
-    // Poll backend every 5 seconds for admin unlock signals
-    const role = localStorage.getItem('role');
-    if (role === 'student') {
-      pollInterval = setInterval(checkSessionAndInitTimer, 5000);
-    }
+    // Poll backend every 3 seconds for admin unlock and time extension signals
+    pollInterval = setInterval(checkSessionAndInitTimer, 3000);
 
     return () => {
       isMounted = false;
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [questionId, questionTimeLimit]);
+  }, [questionId]);
 
   // Fullscreen Proctoring Effect
   useEffect(() => {
@@ -166,20 +212,40 @@ export default function LabPage() {
     requestFS();
 
     const triggerViolation = (reason) => {
+      // Skip if already in cooldown, already submitted, or warning modal is showing
+      if (violationCooldownRef.current) return;
       if (useProjectStore.getState().submitResult) return;
+
+      violationCooldownRef.current = true;
+      setTimeout(() => { violationCooldownRef.current = false; }, 600);
+
       setWarningCount((prev) => {
         const next = prev + 1;
-        const qId = useProjectStore.getState().questionId;
-        if (qId) {
-          api.reportWarning(qId, next, reason).catch(() => {});
-        }
         if (next >= 3) {
+          const targetQId = questionId || useProjectStore.getState().questionId;
+          if (targetQId) {
+            api.reportWarning(targetQId, 3, reason).catch((err) => console.error("Report warning failed:", err));
+          }
+          wasLockedByProctorRef.current = true;
           setTerminatedByProctor(true);
           setShowWarningModal(false);
           // Auto-submit on 3rd violation
           const store = useProjectStore.getState();
           if (!store.submitResult) {
-            store.submitProject().catch(() => {});
+            store.submitProject().catch((err) => {
+              console.error("Auto-submit failed after proctor termination:", err);
+              useProjectStore.setState({ 
+                submitResult: { 
+                  passed: false, 
+                  score: 0, 
+                  max_score: 100,
+                  passed_count: 0,
+                  check_count: 0,
+                  error: 'Evaluation failed or incomplete' 
+                },
+                submitting: false 
+              });
+            });
           }
           return 3;
         } else {
@@ -210,10 +276,6 @@ export default function LabPage() {
         window.location.href = '/student';
         return;
       }
-
-      if (e.key === 'Escape' && !useProjectStore.getState().submitResult) {
-        triggerViolation('Pressed Esc key');
-      }
     };
 
     document.addEventListener('fullscreenchange', handleFSChange);
@@ -227,12 +289,15 @@ export default function LabPage() {
   }, []);
 
   const returnToFullScreen = async () => {
-    setShowWarningModal(false);
     try {
       if (!document.fullscreenElement) {
         await document.documentElement.requestFullscreen();
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn("Failed to request fullscreen:", err);
+    }
+    setShowWarningModal(false);
+    violationCooldownRef.current = false;
   };
 
   const fmtTime = (s) => {
@@ -295,11 +360,11 @@ export default function LabPage() {
   };
 
   const hasTerminals = openTerminals.length > 0;
-  const evalResult = submitResult?.evaluation;
+  const evalResult = submitResult?.evaluation || (submitResult?.passed !== undefined || submitResult?.overall_score !== undefined ? submitResult : null);
 
   // Extract check results for hidden test case view
-  const rawResults = evalResult?.results || {};
-  const checks = Array.isArray(rawResults) ? rawResults : (rawResults.check_results || []);
+  const rawResults = evalResult?.results || evalResult?.check_results || {};
+  const checks = Array.isArray(rawResults) ? rawResults : (rawResults.check_results || (evalResult?.check_results || []));
   const passedCount = checks.filter(c => c.passed).length;
   const totalCount = checks.length;
 
@@ -369,6 +434,45 @@ export default function LabPage() {
         </div>
       </div>
 
+      {/* Admin Unlocked & Extension Notice Modal */}
+      {showUnlockedNotice && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 2000,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 440,
+            width: '90%', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.3s ease',
+          }}>
+            <div style={{ fontSize: 56, marginBottom: 10 }}>🎉</div>
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#10B981', marginBottom: 8 }}>
+              TEST UNLOCKED & EXTENDED
+            </h2>
+            <p style={{ fontSize: 15, color: '#4B5563', marginBottom: 20, lineHeight: 1.6 }}>
+              Your test session has been unlocked and your time limit extended by the Administrator.
+            </p>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800, background: '#10B981', borderColor: '#10B981' }}
+              onClick={async () => {
+                try {
+                  if (!document.fullscreenElement) {
+                    await document.documentElement.requestFullscreen();
+                  }
+                } catch (err) {
+                  console.warn("Failed to request fullscreen:", err);
+                }
+                setShowUnlockedNotice(false);
+                violationCooldownRef.current = false;
+              }}
+            >
+              🔒 Resume Full Screen Test
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Proctoring Warning Modal */}
       {showWarningModal && (
         <div style={{
@@ -416,12 +520,38 @@ export default function LabPage() {
           <div style={{
             background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 400,
             textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.3s ease',
           }}>
             <div style={{ fontSize: 56, marginBottom: 10 }}>⏰</div>
-            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 12 }}>Time's Up!</h2>
-            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 8 }}>Your test duration has expired.</p>
-            <p style={{ fontSize: 13, color: '#9CA3AF' }}>Your work is being auto-submitted for grading...</p>
-            <div className="spinner" style={{ margin: '20px auto' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 8 }}>Time's Up!</h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 20 }}>Your test duration has expired.</p>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800 }}
+              onClick={() => {
+                const fallback = {
+                  passed: false,
+                  overall_score: 0,
+                  score: 0,
+                  max_score: 100,
+                  passed_count: 0,
+                  check_count: 5,
+                  check_results: [
+                    { passed: false }, { passed: false }, { passed: false }, { passed: false }, { passed: false }
+                  ],
+                  results: {
+                    check_results: [
+                      { passed: false }, { passed: false }, { passed: false }, { passed: false }, { passed: false }
+                    ]
+                  }
+                };
+                useProjectStore.setState({
+                  submitResult: { ...fallback, evaluation: fallback }
+                });
+              }}
+            >
+              📊 View Results & Go to Feedback →
+            </button>
           </div>
         </div>
       )}
@@ -435,12 +565,38 @@ export default function LabPage() {
           <div style={{
             background: 'white', borderRadius: 20, padding: '36px 40px', maxWidth: 400,
             textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.3s ease',
           }}>
             <div style={{ fontSize: 56, marginBottom: 10 }}>🚨</div>
-            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 12 }}>Test Terminated</h2>
-            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 8 }}>Maximum proctoring warnings (3/3) exceeded.</p>
-            <p style={{ fontSize: 13, color: '#9CA3AF' }}>Your work is being auto-submitted for grading...</p>
-            <div className="spinner" style={{ margin: '20px auto' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 900, color: '#EF4444', marginBottom: 8 }}>Test Terminated</h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 20 }}>Maximum proctoring warnings (3/3) exceeded.</p>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ width: '100%', fontSize: 15, padding: '14px 20px', fontWeight: 800 }}
+              onClick={() => {
+                const fallback = {
+                  passed: false,
+                  overall_score: 0,
+                  score: 0,
+                  max_score: 100,
+                  passed_count: 0,
+                  check_count: 5,
+                  check_results: [
+                    { passed: false }, { passed: false }, { passed: false }, { passed: false }, { passed: false }
+                  ],
+                  results: {
+                    check_results: [
+                      { passed: false }, { passed: false }, { passed: false }, { passed: false }, { passed: false }
+                    ]
+                  }
+                };
+                useProjectStore.setState({
+                  submitResult: { ...fallback, evaluation: fallback }
+                });
+              }}
+            >
+              📊 View Results & Go to Feedback →
+            </button>
           </div>
         </div>
       )}
@@ -545,11 +701,14 @@ export default function LabPage() {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-                  {!terminatedByProctor && (
+                  {!terminatedByProctor && !timerExpired && (
                     <button
                       className="btn btn-secondary btn-lg"
                       style={{ width: '100%', fontSize: 14, padding: '12px 18px', fontWeight: 700, border: '1.5px solid #7C5CFC', color: '#7C5CFC', background: '#F5F3FF' }}
-                      onClick={() => useProjectStore.setState({ submitResult: null })}
+                      onClick={() => {
+                        setTimerExpired(false);
+                        useProjectStore.setState({ submitResult: null });
+                      }}
                     >
                       🛠️ Continue Editing
                     </button>

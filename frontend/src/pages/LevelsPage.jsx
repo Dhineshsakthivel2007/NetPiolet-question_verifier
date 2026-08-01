@@ -95,7 +95,7 @@ export default function LevelsPage() {
       </div>
 
       <p style={{ color: 'var(--text-secondary)', fontSize: 14, margin: '12px 0 24px' }}>
-        Manage top-level organizational units.
+        Levels for PS assessments
       </p>
 
       {/* ─── Level Cards Grid ─── */}

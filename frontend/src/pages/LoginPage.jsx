@@ -80,8 +80,8 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label className="form-label">Username</label>
-              <input className="form-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter username" required />
+              <label className="form-label">Roll Number / Email / Username</label>
+              <input className="form-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter Roll Number, Email or Username" required />
             </div>
             <div className="form-group">
               <label className="form-label">Password</label>

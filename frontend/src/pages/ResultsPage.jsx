@@ -4,9 +4,11 @@ import { api } from '../services/api.js';
 
 export default function ResultsPage() {
   const [evaluations, setEvaluations] = useState([]);
+  const [rawEvaluations, setRawEvaluations] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [filterPassed, setFilterPassed] = useState('');
   const [filterQuestion, setFilterQuestion] = useState('');
+  const [filterSlot, setFilterSlot] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [downloading, setDownloading] = useState(false);
@@ -20,14 +22,15 @@ export default function ResultsPage() {
       api.getEvaluations(params),
       api.getQuestions(),
     ]).then(([res, qs]) => {
-      // Deduplicate: keep only the latest entry per student per day
       const raw = res.items || [];
+      setRawEvaluations(raw);
+
+      // Deduplicate per student + question + slot timing (so multiple slots show separate results)
       const seen = new Map();
       for (const ev of raw) {
         const studentKey = ev.student_id || ev.student_name || ev.created_by || 'anon';
-        const dateKey = ev.evaluated_at ? new Date(ev.evaluated_at).toISOString().slice(0, 10) : 'unknown';
-        const key = `${studentKey}__${ev.question_id}__${dateKey}`;
-        // First occurrence is the latest (results are sorted desc by date)
+        const slotKey = ev.session_slot || 'no_slot';
+        const key = `${studentKey}__${ev.question_id}__${slotKey}`;
         if (!seen.has(key)) {
           seen.set(key, ev);
         }
@@ -38,6 +41,9 @@ export default function ResultsPage() {
   }, [filterPassed, filterQuestion]);
 
   const getQuestionTitle = (qid) => questions.find(q => q.id === qid)?.title || '—';
+
+  // Available unique slot timings for dropdown filter
+  const availableSlots = Array.from(new Set(rawEvaluations.map(e => e.session_slot).filter(Boolean)));
 
   const handleDownloadExcel = async () => {
     setDownloading(true);
@@ -73,23 +79,28 @@ export default function ResultsPage() {
     } finally { setDownloading(false); }
   };
 
-  const passCount = evaluations.filter(e => e.passed).length;
-  const failCount = evaluations.length - passCount;
-  const avgScore = evaluations.length > 0 ? evaluations.reduce((s, e) => s + (e.overall_score || 0), 0) / evaluations.length : 0;
+  const filteredEvaluations = evaluations.filter(e => {
+    if (filterSlot && (e.session_slot || '') !== filterSlot) return false;
+    return true;
+  });
+
+  const passCount = filteredEvaluations.filter(e => e.passed).length;
+  const failCount = filteredEvaluations.length - passCount;
+  const avgScore = filteredEvaluations.length > 0 ? filteredEvaluations.reduce((s, e) => s + (e.overall_score || 0), 0) / filteredEvaluations.length : 0;
 
   return (
     <>
       <div className="page-header">
         <h2>📊 Evaluation Results</h2>
-        <p>View all student evaluation results, check failure reasons, and export to Excel</p>
+        <p>View final student test results grouped by slot timing, analyze performance, and export report to Excel</p>
       </div>
 
       {/* Stats */}
       <div className="card-grid" style={{ marginBottom: 20 }}>
         <div className="stat-card">
           <span className="stat-icon">📋</span>
-          <div className="stat-value">{evaluations.length}</div>
-          <div className="stat-label">Total</div>
+          <div className="stat-value">{filteredEvaluations.length}</div>
+          <div className="stat-label">Total Submissions</div>
         </div>
         <div className="stat-card">
           <span className="stat-icon">✅</span>
@@ -110,8 +121,8 @@ export default function ResultsPage() {
 
       {/* Filters & Export */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select className="form-select" value={filterPassed} onChange={e => setFilterPassed(e.target.value)} style={{ width: 160 }}>
-          <option value="">All Results</option>
+        <select className="form-select" value={filterPassed} onChange={e => setFilterPassed(e.target.value)} style={{ width: 150 }}>
+          <option value="">All Statuses</option>
           <option value="true">✅ Passed Only</option>
           <option value="false">❌ Failed Only</option>
         </select>
@@ -121,13 +132,19 @@ export default function ResultsPage() {
           {questions.map(q => <option key={q.id} value={q.id}>{q.title}</option>)}
         </select>
 
+        {/* Slot Timing Filter */}
+        <select className="form-select" value={filterSlot} onChange={e => setFilterSlot(e.target.value)} style={{ width: 180 }}>
+          <option value="">All Slot Timings</option>
+          {availableSlots.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
           <label style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From:</label>
-          <input type="date" className="form-input" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: 150, padding: '6px 10px', fontSize: 13 }} />
+          <input type="date" className="form-input" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: 140, padding: '6px 10px', fontSize: 13 }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <label style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To:</label>
-          <input type="date" className="form-input" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: 150, padding: '6px 10px', fontSize: 13 }} />
+          <input type="date" className="form-input" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: 140, padding: '6px 10px', fontSize: 13 }} />
         </div>
         <button className="btn btn-primary btn-sm" onClick={handleDownloadExcel} disabled={downloading}
           style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
@@ -135,17 +152,19 @@ export default function ResultsPage() {
         </button>
       </div>
 
-      {evaluations.length === 0 ? (
+      {filteredEvaluations.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 48 }}>
           <p style={{ fontSize: 48, marginBottom: 12 }}>📋</p>
-          <h3>No evaluations yet</h3>
-          <p style={{ color: 'var(--text-secondary)' }}>Student submissions will appear here</p>
+          <h3>No final evaluations found</h3>
+          <p style={{ color: 'var(--text-secondary)' }}>Final submissions will appear here after students finish their test sessions</p>
         </div>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
+              <th>Roll Num</th>
               <th>Student</th>
+              <th>Slot Timing</th>
               <th>Question</th>
               <th>Score</th>
               <th>Checks</th>
@@ -155,7 +174,7 @@ export default function ResultsPage() {
             </tr>
           </thead>
           <tbody>
-            {evaluations.map(ev => {
+            {filteredEvaluations.map(ev => {
               const rawResults = ev.results || {};
               const checks = Array.isArray(rawResults) ? rawResults : (rawResults.check_results || []);
               const passedChecks = checks.filter(c => c.passed).length;
@@ -163,11 +182,17 @@ export default function ResultsPage() {
 
               return (
                 <tr key={ev.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/results/${ev.id}`)}>
+                  <td style={{ fontWeight: 700, fontSize: 13 }}>{ev.roll_number || '—'}</td>
                   <td>
                     <div>
                       <strong>{ev.student_name || '—'}</strong>
                       {ev.student_id && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ev.student_id}</div>}
                     </div>
+                  </td>
+                  <td>
+                    <span style={{ background: '#F3F4F6', color: '#374151', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+                      {ev.session_slot || '—'}
+                    </span>
                   </td>
                   <td style={{ fontSize: 13 }}>{getQuestionTitle(ev.question_id)}</td>
                   <td>

@@ -1,14 +1,39 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
+import { MdLogout } from "react-icons/md";
+import { FaUsersCog } from "react-icons/fa";
+import {
+  MdDashboard,
+  MdMonitor,
+  MdLayers,
+  MdTopic,
+  MdFactCheck,
+  MdAssessment
+} from "react-icons/md";
 
+import {
+  FaQuestionCircle,
+  FaSignal
+} from "react-icons/fa";
+
+import { FiLogOut } from "react-icons/fi";
+//   { to: '/', icon: '📊', label: 'Dashboard' },
+//   { to: '/sessions', icon: '📡', label: 'Session Monitor' },
+//   { to: '/levels', icon: '🎯', label: 'Levels' },
+//   { to: '/topics', icon: '📁', label: 'Topics' },
+//   { to: '/questions', icon: '❓', label: 'Questions' },
+//   { to: '/evaluate', icon: '⚡', label: 'Evaluate' },
+//   { to: '/results', icon: '📋', label: 'Results' },
+// ];
 const navItems = [
-  { to: '/', icon: '📊', label: 'Dashboard' },
-  { to: '/levels', icon: '🎯', label: 'Levels' },
-  { to: '/topics', icon: '📁', label: 'Topics' },
-  { to: '/questions', icon: '❓', label: 'Questions' },
-  { to: '/evaluate', icon: '⚡', label: 'Evaluate' },
-  { to: '/results', icon: '📋', label: 'Results' },
+  { to: "/", icon: <MdDashboard size={22} />, label: "Dashboard" },
+  { to: "/sessions", icon: <MdMonitor size={22} />, label: "Session Monitor" },
+  { to: "/levels", icon: <FaSignal size={20} />, label: "Levels" },
+  { to: "/topics", icon: <MdTopic size={22} />, label: "Topics" },
+  { to: "/questions", icon: <FaQuestionCircle size={20} />, label: "Questions" },
+  { to: "/evaluate", icon: <MdFactCheck size={22} />, label: "Evaluate" },
+  { to: "/results", icon: <MdAssessment size={22} />, label: "Results" },
 ];
 
 export default function Layout() {
@@ -51,7 +76,7 @@ export default function Layout() {
           ))}
           {role === 'admin' && (
             <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-              <span className="nav-icon">👥</span>
+              <FaUsersCog className="nav-icon" size={20} />
               {sidebarOpen && <span style={{ opacity: 1 }}>Users</span>}
             </NavLink>
           )}
@@ -68,7 +93,7 @@ export default function Layout() {
         </div>
 
         <button className="nav-link" onClick={handleLogout} style={{ marginBottom: 8 }}>
-          <span className="nav-icon">🚪</span>
+         <MdLogout className="nav-icon" size={24} style={{ transform: "rotate(180deg)" }} />
           {sidebarOpen && <span style={{ opacity: 1 }}>Logout</span>}
         </button>
       </aside>

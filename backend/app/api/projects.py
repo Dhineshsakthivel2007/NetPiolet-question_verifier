@@ -132,12 +132,16 @@ def finish_project(project_id: str, db: Session = Depends(get_db), user: User = 
         existing_eval.max_score = plan.total_points
         existing_eval.passed = eval_result.passed
         existing_eval.evaluated_at = now
+        existing_eval.roll_number = getattr(user, 'roll_number', None)
+        existing_eval.session_slot = getattr(user, 'session_slot', None)
         evaluation = existing_eval
     else:
         evaluation = Evaluation(
             question_id=project.question_id,
             student_name=user.username,
             student_id=user.id,
+            roll_number=getattr(user, 'roll_number', None),
+            session_slot=getattr(user, 'session_slot', None),
             project_id=project.id,
             evaluation_plan=plan.model_dump(),
             results=eval_result.model_dump(),
@@ -148,6 +152,21 @@ def finish_project(project_id: str, db: Session = Depends(get_db), user: User = 
             evaluated_at=now,
         )
         db.add(evaluation)
+
+    # Sync to TestSession
+    from app.models.test_session import TestSession
+    session = db.query(TestSession).filter(
+        TestSession.student_id == user.id,
+        TestSession.question_id == project.question_id
+    ).first()
+    if session:
+        session.best_score = eval_result.total_score
+        session.passed = eval_result.passed
+        session.is_completed = True
+
+    if user.role == UserRole.student:
+        user.is_active = False
+        user.attendance = "Absent"
 
     db.commit()
     db.refresh(evaluation)

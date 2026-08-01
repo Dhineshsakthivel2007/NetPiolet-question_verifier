@@ -19,7 +19,13 @@ async function request(url, options = {}) {
     throw new Error('Unauthorized');
   }
   if (res.status === 204) return null;
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    if (!res.ok) throw new Error(`Server error (${res.status})`);
+    return null;
+  }
   if (!res.ok) throw new Error(data.detail || 'Request failed');
   return data;
 }
@@ -38,6 +44,9 @@ export const api = {
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   adminCreateUser: (data) => request('/auth/users/create', { method: 'POST', body: JSON.stringify(data) }),
   adminBulkUploadUsers: (formData) => request('/auth/users/bulk-upload', { method: 'POST', body: formData, headers: {} }),
+  downloadSampleTemplate: () => window.open(`${API_BASE}/auth/sample-template`, '_blank'),
+  updateUserAttendance: (userId, attendance) => request(`/auth/users/${userId}/attendance`, { method: 'PUT', body: JSON.stringify({ attendance }) }),
+  bulkUpdateAttendance: (sessionSlot, attendance) => request('/auth/users/bulk-attendance', { method: 'POST', body: JSON.stringify({ session_slot: sessionSlot, attendance }) }),
 
   // Levels
   getLevels: () => request('/levels'),
@@ -81,7 +90,14 @@ export const api = {
   getTestSession: (sessionId) => request(`/student/test/${sessionId}`),
   getStudentResults: () => request('/student/results'),
   lockTestSession: (sessionId) => request(`/student/test/${sessionId}/lock`, { method: 'POST' }),
-  unlockTestSession: (sessionId) => request(`/student/test/${sessionId}/unlock`, { method: 'POST' }),
+  unlockTestSession: (sessionId, extendMinutes = 20) => request(`/student/test/${sessionId}/unlock`, { 
+    method: 'POST', 
+    body: JSON.stringify({ extend_minutes: extendMinutes }) 
+  }),
+  forceFinishTestSession: (sessionId) => request(`/student/test/${sessionId}/force-finish`, { method: 'POST' }),
+  extendTestSessionTime: (sessionId, extraMinutes = 15) => request(`/student/test/${sessionId}/extend-time`, { method: 'POST', body: JSON.stringify({ extra_minutes: extraMinutes }) }),
+  updateUserSlot: (userId, sessionSlot) => request(`/auth/users/${userId}/slot`, { method: 'PUT', body: JSON.stringify({ session_slot: sessionSlot }) }),
+  deleteTestSession: (sessionId) => request(`/student/test/${sessionId}`, { method: 'DELETE' }),
   reportWarning: (questionId, warningCount, reason = 'Exited full screen') => request(`/student/test/${questionId}/report-warning`, { method: 'POST', body: JSON.stringify({ warning_count: warningCount, reason }) }),
   getAllTestSessions: () => request('/student/all-sessions'),
 

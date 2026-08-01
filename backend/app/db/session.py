@@ -38,3 +38,21 @@ def create_tables():
     from app.models.base import Base
     import app.models  # noqa: F401 — ensure all models are imported
     Base.metadata.create_all(bind=engine)
+
+    # Ensure missing columns are added for SQLite databases
+    if settings.database_url.startswith("sqlite"):
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(users)")
+            cols = [row[1] for row in cursor.fetchall()]
+            if "roll_number" not in cols:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN roll_number VARCHAR(50)")
+            if "session_slot" not in cols:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN session_slot VARCHAR(100)")
+            if "level_id" not in cols:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN level_id VARCHAR(36)")
+            if "attendance" not in cols:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN attendance VARCHAR(20) DEFAULT 'Absent'")
+            # Fix existing NULL attendance rows
+            conn.exec_driver_sql("UPDATE users SET attendance = 'Absent' WHERE attendance IS NULL AND role = 'student'")
+            conn.exec_driver_sql("UPDATE users SET attendance = 'Present' WHERE role IN ('admin', 'professor')")
+            conn.commit()

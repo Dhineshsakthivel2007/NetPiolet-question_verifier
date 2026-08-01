@@ -367,6 +367,45 @@ const useProjectStore = create((set, get) => ({
     return node?.data || null;
   },
 
+  // Caching & Auto-Save Helpers
+  _saveLocalCache: () => {
+    const { projectId, nodes, edges } = get();
+    if (!projectId) return null;
+    const state = {
+      nodes: nodes.map(n => ({
+        id: n.id,
+        type: n.data?.type || n.type,
+        hostname: n.data?.hostname || '',
+        position: n.position || { x: 0, y: 0 },
+        interfaces: n.data?.interfaces || {},
+        running_config: n.data?.running_config || {},
+        vlans: n.data?.vlans || [],
+        vtp: n.data?.vtp || {},
+        text: n.data?.text || '',
+        fontSize: n.data?.fontSize,
+        bgColor: n.data?.bgColor,
+        borderColor: n.data?.borderColor,
+        color: n.data?.color,
+      })),
+      edges: edges.map(e => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle || '',
+        targetHandle: e.targetHandle || '',
+        sourcePort: e.data?.sourcePort || '',
+        targetPort: e.data?.targetPort || '',
+        cableType: e.data?.cableType || 'copper-straight',
+      })),
+    };
+    try {
+      localStorage.setItem(`pkt_lab_cache_${projectId}`, JSON.stringify({ state, savedAt: Date.now() }));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
+    return state;
+  },
+
   // Project operations
   loadProject: async (projectId) => {
     try {
@@ -376,7 +415,25 @@ const useProjectStore = create((set, get) => ({
       });
       if (!res.ok) throw new Error('Failed to load project');
       const project = await res.json();
-      const state = project.state || { nodes: [], edges: [] };
+      let state = project.state || { nodes: [], edges: [] };
+
+      // Check local storage cache for any unsaved changes prior to refresh
+      try {
+        const rawLocal = localStorage.getItem(`pkt_lab_cache_${projectId}`);
+        if (rawLocal) {
+          const parsedLocal = JSON.parse(rawLocal);
+          if (parsedLocal && parsedLocal.state && Array.isArray(parsedLocal.state.nodes)) {
+            // If local cache has nodes and server state is empty or has fewer nodes/interfaces, preference local cache
+            const localNodes = parsedLocal.state.nodes;
+            const serverNodes = state.nodes || [];
+            if (localNodes.length >= serverNodes.length && localNodes.length > 0) {
+              state = parsedLocal.state;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Local cache recovery failed:', e);
+      }
 
       // Convert stored nodes back to React Flow format
       const nodes = (state.nodes || []).map(n => ({
@@ -426,10 +483,33 @@ const useProjectStore = create((set, get) => ({
   },
 
   _autoSave: () => {
+    get()._saveLocalCache();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       get().saveProject();
-    }, 2000);
+    }, 400);
+  },
+
+  saveProjectSync: () => {
+    const state = get()._saveLocalCache();
+    const { projectId } = get();
+    if (!projectId || !state) return;
+    try {
+      const token = localStorage.getItem('token');
+      const payload = JSON.stringify({ state });
+      if (navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(`/api/projects/${projectId}`, blob);
+      }
+      fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+    } catch (e) {
+      console.warn('Sync save failed:', e);
+    }
   },
 
   saveProject: async () => {
@@ -437,33 +517,7 @@ const useProjectStore = create((set, get) => ({
     if (!projectId || saving) return;
     set({ saving: true });
     try {
-      const state = {
-        nodes: nodes.map(n => ({
-          id: n.id,
-          type: n.data.type,
-          hostname: n.data.hostname,
-          position: n.position,
-          interfaces: n.data.interfaces,
-          running_config: n.data.running_config,
-          vlans: n.data.vlans,
-          vtp: n.data.vtp,
-          text: n.data.text,
-          fontSize: n.data.fontSize,
-          bgColor: n.data.bgColor,
-          borderColor: n.data.borderColor,
-          color: n.data.color,
-        })),
-        edges: edges.map(e => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle || '',
-          targetHandle: e.targetHandle || '',
-          sourcePort: e.data?.sourcePort || '',
-          targetPort: e.data?.targetPort || '',
-          cableType: e.data?.cableType || 'copper-straight',
-        })),
-      };
+      const state = get()._saveLocalCache();
       const token = localStorage.getItem('token');
       await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',

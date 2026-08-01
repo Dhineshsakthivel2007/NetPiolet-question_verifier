@@ -131,7 +131,7 @@ def export_evaluations_excel(
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
 
-    headers = ["#", "Student Name", "Student ID", "Question", "Topic", "Score", "Max Score",
+    headers = ["#", "Roll Number", "Student Name", "Student ID", "Slot Timing", "Question", "Topic", "Score", "Max Score",
                "Percentage", "Checks Passed", "Checks Failed", "Status", "Date", "Time"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
@@ -158,8 +158,10 @@ def export_evaluations_excel(
 
         row_data = [
             i,
+            getattr(ev, 'roll_number', None) or "—",
             ev.student_name or "",
             ev.student_id or "",
+            getattr(ev, 'session_slot', None) or "—",
             q_title,
             q_topic,
             round(ev.overall_score, 1),

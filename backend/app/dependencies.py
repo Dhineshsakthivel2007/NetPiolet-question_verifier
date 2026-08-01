@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.level import Level  # noqa: F401 — needed for user.level lazy load
 from app.models.user import User, UserRole
 from app.services.auth_service import decode_token
 

@@ -116,13 +116,24 @@ def get_evaluations(
     if not latest_only and passed is not None:
         query = query.filter(Evaluation.passed == passed)
 
+    from app.models.user import User
     evals = query.order_by(Evaluation.created_at.desc()).all()
+
+    for ev in evals:
+        if not getattr(ev, 'roll_number', None) or not getattr(ev, 'session_slot', None):
+            usr = db.query(User).filter(User.id == ev.student_id).first()
+            if usr:
+                if not getattr(ev, 'roll_number', None):
+                    ev.roll_number = usr.roll_number
+                if not getattr(ev, 'session_slot', None):
+                    ev.session_slot = usr.session_slot
 
     if latest_only:
         seen = set()
         deduped = []
         for ev in evals:
-            key = (ev.student_id or ev.student_name or ev.created_by or "anon", ev.question_id)
+            slot_key = getattr(ev, 'session_slot', None) or "no_slot"
+            key = (ev.student_id or ev.student_name or ev.created_by or "anon", ev.question_id, slot_key)
             if key not in seen:
                 seen.add(key)
                 deduped.append(ev)

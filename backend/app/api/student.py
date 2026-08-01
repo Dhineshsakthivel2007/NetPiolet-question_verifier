@@ -13,11 +13,12 @@ from app.config import settings
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.evaluation import Evaluation
+from app.models.level import Level  # noqa: F401 — needed for student.level relationship
 from app.models.question import Question
 from app.models.test_session import TestSession
 from app.models.topic import Topic
 from app.models.user import User, UserRole
-from app.schemas import StudentQuestionResponse, StudentTestResultResponse, TestSessionResponse
+from app.schemas import StudentQuestionResponse, StudentTestResultResponse, TestSessionResponse, UnlockSessionRequest
 from app.services import evaluation_service
 
 router = APIRouter(prefix="/student", tags=["Student Portal"])
@@ -30,12 +31,23 @@ def _require_student(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def _make_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 @router.get("/questions", response_model=list[StudentQuestionResponse])
 def get_student_questions(db: Session = Depends(get_db), user: User = Depends(_require_student)):
-    """Get active questions in deterministic order (by week and creation time). Evaluation plans are hidden."""
-    questions = db.query(Question).filter(Question.is_active == True).order_by(Question.week_number.asc(), Question.created_at.asc()).all()
+    """Get active questions for student (filtered by assigned level if student, with fallback)."""
+    query = db.query(Question).filter(Question.is_active == True)
+    questions = []
+    if user.role == UserRole.student and user.level_id:
+        questions = query.filter(Question.level_id == user.level_id).order_by(Question.week_number.asc(), Question.created_at.asc()).all()
     if not questions:
-        questions = db.query(Question).all()
+        questions = query.order_by(Question.week_number.asc(), Question.created_at.asc()).all()
 
     result = []
     for q in questions:
@@ -53,31 +65,31 @@ def get_student_questions(db: Session = Depends(get_db), user: User = Depends(_r
 
 
 @router.post("/test/{question_id}/start", response_model=TestSessionResponse)
-def start_test(question_id: str, db: Session = Depends(get_db), user: User = Depends(_require_student)):
+def start_test(question_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Start a new test session for a question."""
     question = db.query(Question).filter(Question.id == question_id).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # Check for existing active session
+    # Return existing session if student already started this question
     existing = db.query(TestSession).filter(
         TestSession.student_id == user.id,
         TestSession.question_id == question_id,
-        TestSession.is_completed == False,
-    ).first()
+    ).order_by(TestSession.created_at.desc()).first()
 
     if existing:
         # Check if expired
-        if existing.expires_at and datetime.now(timezone.utc) > existing.expires_at.replace(tzinfo=timezone.utc):
-            existing.is_completed = True
-            db.commit()
-        else:
-            return existing
+        if not existing.is_completed and existing.expires_at:
+            exp = _make_utc(existing.expires_at)
+            if exp and datetime.now(timezone.utc) > exp:
+                existing.is_completed = True
+                db.commit()
+                db.refresh(existing)
+        return existing
 
     now = datetime.now(timezone.utc)
-    expires = None
-    if question.time_limit_minutes > 0:
-        expires = now + timedelta(minutes=question.time_limit_minutes)
+    limit_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 60
+    expires = now + timedelta(minutes=limit_mins)
 
     session = TestSession(
         student_id=user.id,
@@ -108,8 +120,8 @@ def submit_test(
     # Check time limit
     if session.expires_at:
         now = datetime.now(timezone.utc)
-        exp = session.expires_at.replace(tzinfo=timezone.utc) if session.expires_at.tzinfo is None else session.expires_at
-        if now > exp:
+        exp = _make_utc(session.expires_at)
+        if exp and now > exp:
             session.is_completed = True
             db.commit()
             raise HTTPException(status_code=400, detail="Time is up! This test session has expired.")
@@ -293,25 +305,171 @@ def lock_test_session(session_id: str, db: Session = Depends(get_db), user: User
 
 
 @router.post("/test/{session_id}/unlock", response_model=TestSessionResponse)
-def unlock_test_session(session_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Admin / Professor endpoint to unlock a proctor-terminated test session."""
+def unlock_test_session(
+    session_id: str,
+    payload: UnlockSessionRequest | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Admin / Professor endpoint to unlock a student's locked test session.
+    If extend_minutes > 0, time is extended. If extend_minutes == 0, session is unlocked with existing time preserved.
+    """
     if user.role not in (UserRole.admin, UserRole.professor):
         raise HTTPException(status_code=403, detail="Admin or Professor access required")
     session = db.query(TestSession).filter(TestSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Test session not found")
 
-    question = db.query(Question).filter(Question.id == session.question_id).first()
-    time_limit = question.time_limit_minutes if question else 60
+    extra_mins = payload.extend_minutes if payload else 0
 
     # Reset proctor warning & unlock
     session.proctor_locked = False
     session.warning_count = 0
     session.is_completed = False
 
-    # Extend expiration time so student can complete lab in the same time frame
+    # Extend expiration time ONLY if extra_mins > 0
+    if extra_mins > 0:
+        now = datetime.now(timezone.utc)
+        exp = _make_utc(session.expires_at)
+        base_time = exp if (exp and exp > now) else now
+        session.expires_at = base_time + timedelta(minutes=extra_mins)
+    elif session.expires_at:
+        now = datetime.now(timezone.utc)
+        exp = _make_utc(session.expires_at)
+        if exp and exp <= now:
+            session.expires_at = now + timedelta(minutes=15)
+
+    # Re-activate student account if deactivated
+    student = db.query(User).filter(User.id == session.student_id).first()
+    if student:
+        student.is_active = True
+
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.post("/test/{session_id}/force-finish", response_model=TestSessionResponse)
+def force_finish_test_session(session_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Admin / Professor endpoint to force finish and lock a student's test session."""
+    from app.models.project import Project
+    from app.models.evaluation import Evaluation
+    from app.core import simulation_engine, evaluation_engine
+    from app.core.plan_schema import EvaluationPlan
+
+    if user.role not in (UserRole.admin, UserRole.professor):
+        raise HTTPException(status_code=403, detail="Admin or Professor access required")
+    session = db.query(TestSession).filter(TestSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Test session not found")
+
+    session.proctor_locked = True
+    session.is_completed = True
+
+    # If student has a project, evaluate it and save evaluation
+    project = db.query(Project).filter(Project.student_id == session.student_id, Project.question_id == session.question_id).first()
+    if project and project.state:
+        question = db.query(Question).filter(Question.id == session.question_id).first()
+        student = db.query(User).filter(User.id == session.student_id).first()
+        if question and question.evaluation_plan and student:
+            try:
+                network = simulation_engine.build_network(project.state or {})
+                plan = EvaluationPlan(**question.evaluation_plan)
+                eval_result = evaluation_engine.evaluate(network, plan)
+                now = datetime.now()
+
+                existing_eval = db.query(Evaluation).filter(Evaluation.project_id == project.id).first()
+                if existing_eval:
+                    existing_eval.evaluation_plan = plan.model_dump()
+                    existing_eval.results = eval_result.model_dump()
+                    existing_eval.overall_score = eval_result.total_score
+                    existing_eval.max_score = plan.total_points
+                    existing_eval.passed = eval_result.passed
+                    existing_eval.evaluated_at = now
+                    existing_eval.roll_number = getattr(student, 'roll_number', None)
+                    existing_eval.session_slot = getattr(student, 'session_slot', None)
+                else:
+                    evaluation = Evaluation(
+                        question_id=project.question_id,
+                        student_name=student.username,
+                        student_id=student.id,
+                        roll_number=getattr(student, 'roll_number', None),
+                        session_slot=getattr(student, 'session_slot', None),
+                        project_id=project.id,
+                        evaluation_plan=plan.model_dump(),
+                        results=eval_result.model_dump(),
+                        overall_score=eval_result.total_score,
+                        max_score=plan.total_points,
+                        passed=eval_result.passed,
+                        created_by=student.id,
+                        evaluated_at=now,
+                    )
+                    db.add(evaluation)
+
+                session.best_score = eval_result.total_score
+                session.passed = eval_result.passed
+                project.status = "submitted"
+            except Exception as e:
+                print("Error force evaluating project:", e)
+
+    student = db.query(User).filter(User.id == session.student_id).first()
+    if student and student.role == UserRole.student:
+        student.is_active = False
+        student.attendance = "Absent"
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.delete("/test/{session_id}", status_code=204)
+def delete_test_session(session_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Admin / Professor endpoint to delete a student test session."""
+    if user.role not in (UserRole.admin, UserRole.professor):
+        raise HTTPException(status_code=403, detail="Admin or Professor access required")
+    session = db.query(TestSession).filter(TestSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Test session not found")
+    db.delete(session)
+    db.commit()
+    return None
+
+
+class ExtendTestSessionRequest(BaseModel):
+    extra_minutes: int = 15
+
+
+@router.post("/test/{session_id}/extend-time", response_model=TestSessionResponse)
+def extend_test_session_time(
+    session_id: str,
+    payload: ExtendTestSessionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Admin / Professor endpoint to extend a student's active or expired test time."""
+    if user.role not in (UserRole.admin, UserRole.professor):
+        raise HTTPException(status_code=403, detail="Admin or Professor access required")
+    session = db.query(TestSession).filter(TestSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Test session not found")
+
+    extra = payload.extra_minutes if payload.extra_minutes > 0 else 15
+
+    # Re-enable session if completed or locked
+    session.is_completed = False
+    session.proctor_locked = False
+    session.warning_count = 0
+
     now = datetime.now(timezone.utc)
-    session.expires_at = now + timedelta(minutes=max(time_limit, 30))
+    exp = _make_utc(session.expires_at)
+    base_time = exp if (exp and exp > now) else now
+    session.expires_at = base_time + timedelta(minutes=extra)
+
+    # Re-activate student account if deactivated
+    student = db.query(User).filter(User.id == session.student_id).first()
+    if student:
+        student.is_active = True
+        student.attendance = "Present"
+
     db.commit()
     db.refresh(session)
     return session
@@ -320,18 +478,57 @@ def unlock_test_session(session_id: str, db: Session = Depends(get_db), user: Us
 @router.get("/all-sessions")
 def get_all_test_sessions(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Admin / Professor list of all student test sessions including locked status."""
+    from app.models.evaluation import Evaluation
     if user.role not in (UserRole.admin, UserRole.professor):
         raise HTTPException(status_code=403, detail="Admin or Professor access required")
     sessions = db.query(TestSession).order_by(TestSession.created_at.desc()).all()
     out = []
+    now = datetime.now(timezone.utc)
+
     for s in sessions:
         student = db.query(User).filter(User.id == s.student_id).first()
         question = db.query(Question).filter(Question.id == s.question_id).first()
+
+        # Check for expired test session and deactivate user + reset attendance
+        if s.expires_at:
+            exp = _make_utc(s.expires_at)
+            if exp and exp <= now:
+                s.is_completed = True
+                if student and student.role == UserRole.student:
+                    student.is_active = False
+                    student.attendance = "Absent"
+                db.commit()
+
+        level_name = "All Levels"
+        if student and student.level:
+            level_name = student.level.name
+
+        # Check Evaluation record as fallback/source of truth
+        best_score = s.best_score
+        passed = s.passed
+
+        eval_rec = db.query(Evaluation).filter(
+            Evaluation.student_id == s.student_id,
+            Evaluation.question_id == s.question_id
+        ).order_by(Evaluation.created_at.desc()).first()
+
+        if eval_rec:
+            best_score = eval_rec.overall_score
+            passed = eval_rec.passed
+            if s.best_score != best_score or s.passed != passed:
+                s.best_score = best_score
+                s.passed = passed
+                db.commit()
+
         out.append({
             "id": s.id,
             "student_id": s.student_id,
+            "roll_number": student.roll_number if (student and student.roll_number) else "—",
             "student_name": student.username if student else "Unknown",
             "student_email": student.email if student else "",
+            "session_slot": student.session_slot if (student and student.session_slot) else "—",
+            "level_name": level_name,
+            "student_active": student.is_active if student else False,
             "question_id": s.question_id,
             "question_title": question.title if question else "Unknown",
             "started_at": s.started_at.isoformat() if s.started_at else None,
@@ -339,7 +536,8 @@ def get_all_test_sessions(db: Session = Depends(get_db), user: User = Depends(ge
             "is_completed": s.is_completed,
             "proctor_locked": s.proctor_locked,
             "warning_count": s.warning_count,
-            "best_score": s.best_score,
-            "passed": s.passed,
+            "best_score": best_score,
+            "passed": passed,
+            "has_evaluation": eval_rec is not None or s.is_completed or s.best_score is not None,
         })
     return out

@@ -14,7 +14,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    if not hashed_password:
+        return False
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except (ValueError, Exception):
+        return False
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
@@ -31,11 +36,27 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
-def authenticate_user(db: Session, username: str, password: str) -> User | None:
-    user = db.query(User).filter(User.username == username).first()
-    if user and verify_password(password, user.hashed_password):
-        return user
-    return None
+def authenticate_users(db: Session, username_or_roll: str, password: str) -> list[User]:
+    if not username_or_roll or not username_or_roll.strip():
+        return []
+    val = username_or_roll.strip()
+    from sqlalchemy import func
+    users = db.query(User).filter(
+        (func.lower(User.roll_number) == val.lower()) |
+        (func.lower(User.email) == val.lower()) |
+        (func.lower(User.username) == val.lower())
+    ).all()
+
+    valid_users = []
+    for user in users:
+        if verify_password(password, user.hashed_password):
+            valid_users.append(user)
+    return valid_users
+
+
+def authenticate_user(db: Session, username_or_roll: str, password: str) -> User | None:
+    users = authenticate_users(db, username_or_roll, password)
+    return users[0] if users else None
 
 
 def get_user_by_id(db: Session, user_id: str) -> User | None:

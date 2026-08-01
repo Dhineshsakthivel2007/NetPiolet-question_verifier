@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
+import { FaHandSparkles } from "react-icons/fa6";
+import { MdDashboard } from "react-icons/md";
+import { MdRocketLaunch, MdFactCheck } from "react-icons/md";
+import { FaFolderOpen, FaQuestionCircle } from "react-icons/fa";
+import { FaClipboardCheck } from "react-icons/fa6";
+import { TbTargetArrow } from "react-icons/tb";
 
 const samplePlan = `{
   "topic": "VLAN",
@@ -78,17 +84,18 @@ export default function DashboardPage() {
     <>
       {/* Welcome Banner */}
       <div className="welcome-banner">
-        <h1>👋 Welcome back, {username}!</h1>
+        <h1>
+  <MdDashboard size={36} style={{ marginRight: "10px", verticalAlign: "middle" }} /> Welcome back, {username}!</h1>
         <p>Here's an overview of your Packet Tracer lab evaluation system</p>
       </div>
 
       {/* Stats Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
         {[
-          { icon: '📁', value: stats.topics, label: 'Topics' },
-          { icon: '❓', value: stats.questions, label: 'Questions' },
-          { icon: '⚡', value: stats.evaluations, label: 'Evaluations' },
-          { icon: '🎯', value: `${passRate}%`, label: 'Pass Rate' },
+          { icon: <FaFolderOpen size={30} />, value: stats.topics, label: 'Topics' },
+          { icon: <FaQuestionCircle size={30} />, value: stats.questions, label: 'Questions' },
+          { icon: <MdFactCheck size={30} />, value: stats.evaluations, label: 'Evaluations' },
+          { icon: <TbTargetArrow size={30} />, value: `${passRate}%`, label: 'Pass Rate' },
         ].map((s, i) => (
           <div key={i} className="stat-card card-3d">
             <span className="stat-icon">{s.icon}</span>
@@ -102,14 +109,45 @@ export default function DashboardPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
         {/* Quick Actions */}
         <div>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: 'var(--text-secondary)' }}>🚀 Quick Actions</h3>
+          <h3 style={{
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: 15,
+    fontWeight: 700,
+    marginBottom: 14,
+    color: "var(--text-secondary)",
+  }}
+><MdRocketLaunch size={20} />
+  Quick Actions
+</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {[
-              { href: '/topics', icon: '📁', title: 'Topics', desc: 'Manage topics' },
-              { href: '/questions', icon: '❓', title: 'Questions', desc: 'Create lab questions' },
-              { href: '/evaluate', icon: '⚡', title: 'Evaluate', desc: 'Grade student work' },
-              { href: '/results', icon: '📋', title: 'Results', desc: 'View all results' },
-            ].map((a, i) => (
+  {
+    href: "/topics",
+    icon: <FaFolderOpen size={22} />,
+    title: "Topics",
+    desc: "Manage topics",
+  },
+  {
+    href: "/questions",
+    icon: <FaQuestionCircle size={22} />,
+    title: "Questions",
+    desc: "Create lab questions",
+  },
+  {
+    href: "/evaluate",
+    icon: <MdFactCheck size={22} />,
+    title: "Evaluate",
+    desc: "Grade student work",
+  },
+  {
+    href: "/results",
+    icon: <FaClipboardCheck size={22} />,
+    title: "Results",
+    desc: "View all results",
+  },
+].map((a, i) => (
               <a key={i} href={a.href} className="action-card">
                 <span className="action-icon">{a.icon}</span>
                 <h3>{a.title}</h3>

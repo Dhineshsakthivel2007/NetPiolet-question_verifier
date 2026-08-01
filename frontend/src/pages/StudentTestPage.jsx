@@ -32,6 +32,33 @@ export default function StudentTestPage() {
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
+  useEffect(() => {
+    if (!session?.expires_at || session.is_completed) return;
+
+    const tick = () => {
+      const rawStr = String(session.expires_at).trim();
+      const utcStr = (rawStr.endsWith('Z') || rawStr.includes('+')) ? rawStr : rawStr + 'Z';
+      const expiry = new Date(utcStr).getTime();
+      const remaining = Math.max(0, Math.floor((expiry - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0 && timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+
+    tick();
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(tick, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [session?.expires_at, session?.is_completed]);
+
   const toggleRule = (idx) => setCheckedRules(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
   const allRulesChecked = checkedRules.length === EXAM_RULES.length;
 
@@ -50,6 +77,7 @@ export default function StudentTestPage() {
       // Create test session for timer tracking
       try {
         const sess = await api.startTest(q.id);
+        setSession(sess);
         localStorage.setItem('testSessionId', sess.id || '');
         localStorage.setItem('testExpiresAt', sess.expires_at || '');
       } catch (sessErr) {
