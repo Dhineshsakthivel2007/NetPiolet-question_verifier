@@ -222,15 +222,15 @@ const DeviceNode = memo(({ id, data, selected }) => {
 
       {/* Hostname Label */}
       <div style={{
-        fontSize: 9, fontWeight: 800, color: '#0F172A',
-        marginTop: 2, textAlign: 'center',
+        fontSize: 8.5, fontWeight: 800, color: '#0F172A',
+        marginTop: 1, textAlign: 'center',
         textShadow: '0 1px 2px rgba(255,255,255,0.95)',
-        background: selected ? '#E0F2FE' : 'transparent',
-        border: selected ? '1px solid #7DD3FC' : '1px solid transparent',
+        background: selected ? '#E0F2FE' : 'rgba(255,255,255,0.7)',
+        border: selected ? '1px solid #7DD3FC' : '1px solid rgba(226,232,240,0.6)',
         padding: '0 4px', borderRadius: 3,
         transition: 'all 0.2s ease',
         lineHeight: 1.2,
-        maxWidth: 74,
+        maxWidth: 70,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
@@ -240,12 +240,12 @@ const DeviceNode = memo(({ id, data, selected }) => {
 
       {/* Port Indicator */}
       <div style={{
-        fontSize: 8.5, fontWeight: 700, marginTop: 2, textAlign: 'center',
+        fontSize: 8, fontWeight: 700, marginTop: 1, textAlign: 'center',
         color: isFull ? '#EF4444' : '#0284C7',
         background: isFull ? '#FEE2E2' : '#F0F9FF',
         border: `1px solid ${isFull ? '#FCA5A5' : '#BAE6FD'}`,
-        padding: '1px 6px', borderRadius: 100,
-        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        padding: '0.5px 5px', borderRadius: 100,
+        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
         whiteSpace: 'nowrap',
       }}>
         {isFull ? `🔒 ${maxPorts}/${maxPorts}` : `🔌 ${connectedCables}/${maxPorts}`}

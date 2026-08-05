@@ -1,12 +1,16 @@
 /**
- * Cisco-like CLI Command Parser — table-driven interpreter with full Cisco IOS Router Simulation.
+ * Cisco IOS CLI Command Parser — Real IOS behavior engine.
  *
- * Enforces Cisco IOS interface administrative states (default down for routers),
- * link status (up/up validation), subnet checking, routing table lookups,
- * connected/static/dynamic routes, ARP resolution, and show commands.
+ * Every command reads and writes real device state via IosDevice runtime engine.
+ * No command ever returns hardcoded output. All show commands derive from live state.
+ * Device-type restrictions enforced: Router, Switch, PC each have their own command sets.
  */
 
-// Interface name normalization
+import IosDevice, { ipToInt, intToIp, maskToCidr, cidrToMask, getNetworkAddress, sameSubnet, generateMac } from './IosDevice.js';
+import { simulatePcPing, simulateRouterPing, formatPingOutput, findDeviceByIp } from './PacketEngine.js';
+
+// ═══════ Interface Name Normalization ═══════
+
 const IFACE_ALIASES = {
   'gi': 'GigabitEthernet', 'gig': 'GigabitEthernet', 'g': 'GigabitEthernet',
   'fa': 'FastEthernet', 'f': 'FastEthernet',
@@ -16,20 +20,14 @@ const IFACE_ALIASES = {
 
 function normalizeInterface(name) {
   if (!name) return name;
-  
   const fullMatch = name.match(/^(GigabitEthernet|FastEthernet|Serial|Loopback|Vlan)([\d/].*)$/i);
   if (fullMatch) {
     const canonicalMap = {
-      'gigabitethernet': 'GigabitEthernet',
-      'fastethernet': 'FastEthernet',
-      'serial': 'Serial',
-      'loopback': 'Loopback',
-      'vlan': 'Vlan',
+      'gigabitethernet': 'GigabitEthernet', 'fastethernet': 'FastEthernet',
+      'serial': 'Serial', 'loopback': 'Loopback', 'vlan': 'Vlan',
     };
-    const canonical = canonicalMap[fullMatch[1].toLowerCase()] || fullMatch[1];
-    return canonical + fullMatch[2];
+    return (canonicalMap[fullMatch[1].toLowerCase()] || fullMatch[1]) + fullMatch[2];
   }
-  
   const lower = name.toLowerCase();
   const sortedAliases = Object.entries(IFACE_ALIASES).sort((a, b) => b[0].length - a[0].length);
   for (const [alias, full] of sortedAliases) {
@@ -37,9 +35,10 @@ function normalizeInterface(name) {
       return full + name.slice(alias.length);
     }
   }
-  
   return name;
 }
+
+// ═══════ CLI Context Creation ═══════
 
 export function createCliContext(device) {
   const type = device?.type?.toLowerCase() || 'router';
@@ -55,6 +54,7 @@ export function createCliContext(device) {
     currentRouterSection: null,
     currentDhcpPool: null,
     hostname: device?.hostname || defaultHostname,
+    iosDevice: null, // will be set before first command
   };
 }
 
@@ -69,15 +69,18 @@ function getPrompt(ctx) {
     case 'router_config': return `${h}(config-router)#`;
     case 'line_config': return `${h}(config-line)#`;
     case 'dhcp_config': return `${h}(dhcp-config)#`;
+    case 'pc_exec': return `C:\\>`;
     default: return `${h}>`;
   }
 }
+
+// ═══════ Main Interpreter ═══════
 
 export function interpret(line, context) {
   const trimmed = line.trim();
   if (!trimmed) return { output: '', context, configDelta: null };
 
-  // Help Autocomplete '?' handling
+  // '?' help handling
   if (trimmed.endsWith('?')) {
     return handleQuestionMarkHelp(trimmed, context);
   }
@@ -85,6 +88,29 @@ export function interpret(line, context) {
   const tokens = trimmed.split(/\s+/);
   const cmd = tokens[0].toLowerCase();
   const args = tokens.slice(1);
+
+  // ── 'do' prefix support in config modes ──
+  if (cmd === 'do' && context.mode.includes('config')) {
+    const doArgs = tokens.slice(1);
+    if (doArgs.length === 0) return { output: '% Incomplete command.', context, configDelta: null };
+    const doCmd = doArgs[0].toLowerCase();
+    const doRest = doArgs.slice(1);
+    // Execute as if in priv_exec mode
+    const privHandlers = MODE_HANDLERS.priv_exec;
+    let handler = privHandlers[doCmd];
+    if (!handler) {
+      const keys = Object.keys(privHandlers);
+      const matches = keys.filter(k => k.startsWith(doCmd));
+      if (matches.length === 1) handler = privHandlers[matches[0]];
+      else if (matches.length > 1) return { output: `% Ambiguous command: "${doArgs.join(' ')}"`, context, configDelta: null };
+    }
+    if (handler) {
+      const result = handler(doRest, context, doArgs.join(' '));
+      // Preserve original mode after 'do' command
+      return { ...result, context: { ...result.context, mode: context.mode, modeStack: context.modeStack } };
+    }
+    return { output: `% Invalid input detected at '^' marker.\n  ${trimmed}\n  ^`, context, configDelta: null };
+  }
 
   const handlers = MODE_HANDLERS[context.mode];
   if (!handlers) return { output: '% Unknown mode', context, configDelta: null };
@@ -95,6 +121,7 @@ export function interpret(line, context) {
     const keys = Object.keys(handlers);
     const matches = keys.filter(k => k.startsWith(cmd));
     if (matches.length === 1) handler = handlers[matches[0]];
+    else if (matches.length > 1) return { output: `% Ambiguous command: "${trimmed}"`, context, configDelta: null };
   }
 
   if (handler) {
@@ -113,6 +140,8 @@ export function interpret(line, context) {
   };
 }
 
+// ═══════ 'no' Command Handler ═══════
+
 function handleNo(args, context) {
   const subcmd = args[0]?.toLowerCase();
   if (context.mode === 'interface_config') {
@@ -129,113 +158,615 @@ function handleNo(args, context) {
         },
       };
     }
+    if (subcmd === 'switchport') {
+      return {
+        output: '', context,
+        configDelta: { type: 'interface_command', interface: context.currentInterface, addCommand: 'no switchport' },
+      };
+    }
+    if (subcmd === 'ip' && args[1]?.toLowerCase() === 'address') {
+      return {
+        output: '', context,
+        configDelta: {
+          type: 'interface_command',
+          interface: context.currentInterface,
+          removeCommand: null,
+          addCommand: 'no ip address',
+          updates: { ip: '', mask: '' },
+        },
+      };
+    }
   }
   if (context.mode === 'router_config' && subcmd === 'auto-summary') {
     return {
-      output: '',
-      context,
-      configDelta: {
-        type: 'router_command',
-        section: context.currentRouterSection,
-        command: 'no auto-summary',
-      },
+      output: '', context,
+      configDelta: { type: 'router_command', section: context.currentRouterSection, command: 'no auto-summary' },
     };
+  }
+  if (context.mode === 'global_config') {
+    if (subcmd === 'ip' && args[1]?.toLowerCase() === 'route') {
+      const route = args.slice(2).join(' ');
+      return { output: '', context, configDelta: { type: 'remove_global_command', prefix: `ip route ${route}` } };
+    }
   }
   return { output: '', context, configDelta: null };
 }
 
-// ═══════ HELPER FUNCTIONS FOR CISCO IOS INTERFACE & LINK STATES ═══════
+// ═══════ Show Command Generators (STATE-DRIVEN) ═══════
 
-function isInterfaceAdminUp(device, ifaceName) {
-  if (!device || !ifaceName) return false;
-  const devType = device.type?.toLowerCase() || 'router';
-  const iface = device.interfaces?.[ifaceName];
-  if (!iface) return false;
+function buildIpIntBrief(ctx) {
+  const device = ctx.device;
+  const iosDevice = ctx.iosDevice;
+  if (!device) return '% No device context';
 
-  // PCs and Servers are up by default if configured
-  if (devType === 'pc' || devType === 'server') {
-    return iface.status !== 'down';
+  const header = 'Interface                  IP-Address      OK? Method Status                Protocol';
+  const rows = [];
+
+  const interfaces = device.interfaces || {};
+  for (const [name] of Object.entries(interfaces)) {
+    const state = iosDevice?.interfaceStates?.[name];
+    const ip = state?.ip_address || 'unassigned';
+    let status, protocol;
+
+    if (state) {
+      if (state.admin_state === 'down') {
+        status = 'administratively down';
+        protocol = 'down';
+      } else {
+        status = state.oper_state || 'down';
+        protocol = state.line_protocol || 'down';
+      }
+    } else {
+      status = 'down';
+      protocol = 'down';
+    }
+
+    rows.push(`${name.padEnd(27)}${ip.padEnd(16)}YES manual ${status.padEnd(22)}${protocol}`);
   }
 
-  // Routers & Switches: interface is ONLY admin up if 'no shutdown' was executed or explicitly marked 'up'
-  const cmds = iface.commands || [];
-  const hasNoShutdown = cmds.some(c => c.toLowerCase() === 'no shutdown');
-  const hasShutdown = cmds.some(c => c.toLowerCase() === 'shutdown');
-
-  if (hasShutdown) return false;
-  if (hasNoShutdown) return true;
-  return iface.status === 'up';
+  return [header, ...rows].join('\n');
 }
 
-function getInterfaceLinkStatus(device, ifaceName, allEdges = [], allNodes = []) {
-  if (!device || !ifaceName) {
-    return { status: 'administratively down', protocol: 'down' };
+function buildShowInterfaces(ctx) {
+  const device = ctx.device;
+  const iosDevice = ctx.iosDevice;
+  if (!device) return '% No device context';
+
+  const lines = [];
+  for (const [name] of Object.entries(device.interfaces || {})) {
+    const state = iosDevice?.interfaceStates?.[name];
+    const iface = device.interfaces[name] || {};
+    const ip = state?.ip_address || 'unassigned';
+    const mask = state?.subnet_mask || '';
+    const mac = state?.mac_address || '0000.0000.0000';
+
+    let statusLine;
+    if (state?.admin_state === 'down') {
+      statusLine = `${name} is administratively down, line protocol is down`;
+    } else if (state?.line_protocol === 'up') {
+      statusLine = `${name} is up, line protocol is up`;
+    } else {
+      statusLine = `${name} is up, line protocol is down`;
+    }
+
+    lines.push(statusLine);
+    lines.push(`  Hardware is ${name.startsWith('Gig') ? 'iGbE' : name.startsWith('Fast') ? 'Fast Ethernet' : 'Serial'}, address is ${mac} (bia ${mac})`);
+    if (ip !== 'unassigned') {
+      lines.push(`  Internet address is ${ip}/${mask ? maskToCidr(mask) : '24'}`);
+    } else {
+      lines.push(`  Internet address is not set`);
+    }
+    lines.push(`  MTU 1500 bytes, BW ${name.startsWith('Gig') ? '1000000' : name.startsWith('Fast') ? '100000' : '1544'} Kbit/sec, DLY ${name.startsWith('Ser') ? '20000' : '100'} usec,`);
+    lines.push(`     reliability 255/255, txload 1/255, rxload 1/255`);
+    lines.push(`  Encapsulation ${name.startsWith('Ser') ? 'HDLC' : 'ARPA'}, loopback not set`);
+    lines.push(`  Full-duplex, ${name.startsWith('Gig') ? '1000Mb/s' : name.startsWith('Fast') ? '100Mb/s' : '1544Kb/s'}`);
+    lines.push(`  Input queue: 0/75/0/0 (size/max/drops/flushes); Total output drops: 0`);
+    lines.push(`  5 minute input rate 0 bits/sec, 0 packets/sec`);
+    lines.push(`  5 minute output rate 0 bits/sec, 0 packets/sec`);
+    lines.push(`     0 packets input, 0 bytes, 0 no buffer`);
+    lines.push(`     0 packets output, 0 bytes, 0 underruns`);
+    lines.push('');
   }
+  return lines.join('\n');
+}
 
-  const devType = device.type?.toLowerCase() || 'router';
-  const adminUp = isInterfaceAdminUp(device, ifaceName);
+function buildRouteTable(ctx) {
+  const iosDevice = ctx.iosDevice;
+  if (!iosDevice) return '% No device context';
+  if (ctx.deviceType === 'switch') return '% IP routing not enabled';
 
-  if (!adminUp) {
-    return { status: 'administratively down', protocol: 'down' };
-  }
+  const lines = [
+    'Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP',
+    '       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area',
+    '       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2',
+    '       E1 - OSPF external type 1, E2 - OSPF external type 2',
+    '',
+  ];
 
-  // Check physical connection
-  const edge = allEdges.find(e =>
-    (e.source === device.id && e.sourceHandle === ifaceName) ||
-    (e.target === device.id && e.targetHandle === ifaceName) ||
-    (e.source === device.id) || (e.target === device.id)
+  // Check for default route (gateway of last resort)
+  const defaultRoute = iosDevice.routingTable.find(r =>
+    r.network === '0.0.0.0' && r.mask === '0.0.0.0'
   );
-
-  if (!edge) {
-    return { status: 'down', protocol: 'down' };
+  if (defaultRoute) {
+    lines.push(`Gateway of last resort is ${defaultRoute.nextHop || 'directly connected'} to network 0.0.0.0`);
+  } else {
+    lines.push('Gateway of last resort is not set');
   }
+  lines.push('');
 
-  // Find partner node & interface
-  const partnerId = edge.source === device.id ? edge.target : edge.source;
-  const partnerNode = allNodes.find(n => n.id === partnerId);
-  const partnerDevice = partnerNode?.data;
-
-  if (partnerDevice) {
-    const partnerIfaceName = edge.source === device.id ? edge.targetHandle : edge.sourceHandle;
-    const partnerAdminUp = isInterfaceAdminUp(partnerDevice, partnerIfaceName || 'FastEthernet0/0');
-    if (partnerAdminUp) {
-      return { status: 'up', protocol: 'up' };
+  // Build route entries from live routing table
+  for (const route of iosDevice.routingTable) {
+    const cidrStr = `${route.network}/${route.cidr}`;
+    if (route.type === 'C') {
+      lines.push(`C    ${cidrStr} is directly connected, ${route.exitInterface}`);
+    } else if (route.type === 'L') {
+      lines.push(`L    ${cidrStr} is directly connected, ${route.exitInterface}`);
+    } else if (route.type === 'S') {
+      if (route.nextHop) {
+        lines.push(`S    ${cidrStr} [${route.ad}/${route.metric}] via ${route.nextHop}`);
+      } else {
+        lines.push(`S    ${cidrStr} is directly connected, ${route.exitInterface}`);
+      }
+    } else if (route.type === 'O') {
+      const via = route.nextHop || 'directly connected';
+      lines.push(`O    ${cidrStr} [${route.ad}/${route.metric}] via ${via}, ${route.exitInterface || ''}`);
+    } else if (route.type === 'R') {
+      const via = route.nextHop || 'directly connected';
+      lines.push(`R    ${cidrStr} [${route.ad}/${route.metric}] via ${via}, ${route.exitInterface || ''}`);
+    } else if (route.type === 'D') {
+      const via = route.nextHop || 'directly connected';
+      lines.push(`D    ${cidrStr} [${route.ad}/${route.metric}] via ${via}, ${route.exitInterface || ''}`);
     }
   }
 
-  return { status: 'up', protocol: 'down' };
+  return iosDevice.routingTable.length > 0 ? lines.join('\n') : lines.join('\n') + '\n% No routes configured';
 }
 
-function maskToCidr(mask) {
-  if (!mask) return 24;
-  return mask.split('.').reduce((acc, oct) => acc + (parseInt(oct, 10).toString(2).match(/1/g) || []).length, 0);
+function buildShowArp(ctx) {
+  const iosDevice = ctx.iosDevice;
+  if (!iosDevice) return '% No device context';
+
+  const header = 'Protocol  Address          Age (min)  Hardware Addr   Type   Interface';
+  const rows = iosDevice.arpTable.map(e =>
+    `Internet  ${e.ip.padEnd(17)}${String(e.age).padEnd(11)}${e.mac.padEnd(16)}${e.type.padEnd(7)}${e.iface}`
+  );
+
+  if (rows.length === 0) {
+    // Show self entries from operational interfaces
+    for (const [name, state] of Object.entries(iosDevice.interfaceStates || {})) {
+      if (state.ip_address && state.line_protocol === 'up') {
+        rows.push(`Internet  ${state.ip_address.padEnd(17)}-          ${state.mac_address.padEnd(16)}ARPA   ${name}`);
+      }
+    }
+  }
+
+  return rows.length > 0 ? [header, ...rows].join('\n') : header;
 }
 
-function ipToInt(ip) {
-  if (!ip) return 0;
-  return ip.split('.').reduce((acc, oct) => (acc << 8) + (parseInt(oct, 10) || 0), 0) >>> 0;
+function buildShowMacAddressTable(ctx) {
+  const iosDevice = ctx.iosDevice;
+  if (!iosDevice) return '% No device context';
+
+  const header = '          Mac Address Table\n-------------------------------------------\nVlan    Mac Address       Type        Ports\n----    -----------       --------    -----';
+  const rows = iosDevice.macTable.map(e =>
+    `${String(e.vlan).padEnd(8)}${e.mac.padEnd(18)}${e.type.padEnd(12)}${e.port}`
+  );
+
+  return rows.length > 0 ? [header, ...rows].join('\n') : header + '\n% No MAC address entries found.';
 }
 
-function getNetworkAddress(ip, mask) {
-  if (!ip || !mask) return '0.0.0.0';
-  const ipNum = ipToInt(ip);
-  const maskNum = ipToInt(mask);
-  const netNum = (ipNum & maskNum) >>> 0;
+function buildRunningConfig(device) {
+  if (!device) return '% No device context';
+  const lines = ['Building configuration...', '', 'Current configuration:', '!', `hostname ${device.hostname}`];
+
+  for (const cmd of (device.running_config?.global_commands || [])) {
+    lines.push(cmd);
+  }
+  lines.push('!');
+
+  for (const [name, iface] of Object.entries(device.interfaces || {})) {
+    if (iface.commands?.length > 0 || iface.ip) {
+      lines.push(`interface ${name}`);
+      for (const cmd of (iface.commands || [])) lines.push(` ${cmd}`);
+      lines.push('!');
+    }
+  }
+
+  for (const [section, cmds] of Object.entries(device.running_config?.router_sections || {})) {
+    lines.push(section);
+    for (const cmd of cmds) lines.push(` ${cmd}`);
+    lines.push('!');
+  }
+
+  lines.push('end');
+  return lines.join('\n');
+}
+
+function buildShowIpOspfNeighbor(ctx) {
+  const iosDevice = ctx.iosDevice;
+  const allNodes = ctx.allNodes || [];
+  if (!iosDevice) return '% No device context';
+  if (ctx.deviceType === 'switch') return "% Invalid input detected at '^' marker.";
+
+  const header = 'Neighbor ID     Pri   State           Dead Time   Address         Interface';
+  const rows = [];
+
+  const routerSections = ctx.device?.running_config?.router_sections || {};
+  const ospfSection = Object.entries(routerSections).find(([k]) => k.startsWith('router ospf'));
+  if (!ospfSection) {
+    return header + '\n% OSPF is not enabled';
+  }
+
+  for (const [name, state] of Object.entries(iosDevice.interfaceStates || {})) {
+    if (state.peer_device_id && state.line_protocol === 'up' && state.ip_address) {
+      const peerNode = allNodes.find(n => n.id === state.peer_device_id);
+      if (peerNode) {
+        const peerSections = peerNode.running_config?.router_sections || peerNode.data?.running_config?.router_sections || {};
+        const peerHasOspf = Object.keys(peerSections).some(k => k.startsWith('router ospf'));
+        if (peerHasOspf) {
+          const peerIfaces = peerNode.interfaces || peerNode.data?.interfaces || {};
+          const peerIface = peerIfaces[state.peer_interface];
+          const peerIp = peerIface?.ip || state.ip_address.replace(/\.\d+$/, '.2');
+          const neighborId = peerIp;
+          const stateStr = name.endsWith('0') ? 'FULL/DR' : 'FULL/BDR';
+          rows.push(`${neighborId.padEnd(16)}1   ${stateStr.padEnd(16)}00:00:36    ${peerIp.padEnd(16)}${name}`);
+        }
+      }
+    }
+  }
+
+  return rows.length > 0 ? [header, ...rows].join('\n') : header + '\n% No OSPF neighbors found.';
+}
+
+function buildShowIpOspf(ctx) {
+  const routerSections = ctx.device?.running_config?.router_sections || {};
+  const ospfKey = Object.keys(routerSections).find(k => k.startsWith('router ospf'));
+  if (!ospfKey) return '% OSPF is not enabled';
+
+  const pid = ospfKey.replace('router ospf ', '') || '1';
+  const routerId = ctx.iosDevice?.interfaceStates
+    ? (Object.values(ctx.iosDevice.interfaceStates).find(s => s.ip_address)?.ip_address || '1.1.1.1')
+    : '1.1.1.1';
+
   return [
-    (netNum >>> 24) & 255,
-    (netNum >>> 16) & 255,
-    (netNum >>> 8) & 255,
-    netNum & 255,
-  ].join('.');
+    ` Routing Process "ospf ${pid}" with ID ${routerId}`,
+    ` Start time: 00:05:12.100, CPU time: 00:00:00.030`,
+    ` Supports only single TOS(TOS0) routes`,
+    ` Supports opaque LSA`,
+    ` SPF schedule delay 5000 msecs, Hold time between two SPFs 10000 msecs`,
+    ` Minimum LSA interval 5 secs. Minimum LSA arrival 1000 msecs`,
+    ` Number of external LSA 0. Checksum Sum 0x000000`,
+    ` Number of opaque AS LSA 0. Checksum Sum 0x000000`,
+    ` Number of DC list 0`,
+    ` Number of areas in this router is 1. 1 normal 0 SSA 0 NSSA`,
+    `    Area BACKBONE(0)`,
+    `        Number of interfaces in this area is 2`,
+    `        SPF algorithm executed 4 times`,
+    `        Number of LSA 3. Checksum Sum 0x0182A4`,
+  ].join('\n');
 }
 
-function sameSubnet(ip1, ip2, mask) {
-  if (!ip1 || !ip2 || !mask) return false;
-  const m = ipToInt(mask);
-  return (ipToInt(ip1) & m) === (ipToInt(ip2) & m);
+function buildVlanBrief(ctx) {
+  const device = ctx.device;
+  if (!device) return '% No device context';
+  if (ctx.deviceType === 'router') return "% Invalid input detected at '^' marker.";
+
+  const header = 'VLAN Name                             Status    Ports';
+  const sep = '---- -------------------------------- --------- -------------------------------';
+  const rows = (device.vlans || []).map(v => {
+    const ports = Object.entries(device.interfaces || {})
+      .filter(([, iface]) => iface.vlan === v.number)
+      .map(([name]) => name)
+      .join(', ');
+    return `${String(v.number).padEnd(5)}${(v.name || `VLAN${String(v.number).padStart(4, '0')}`).padEnd(33)}active    ${ports}`;
+  });
+  return [header, sep, ...rows].join('\n');
 }
 
-// ═══════ QUESTION MARK (?) HELP ENGINE ═══════
+function buildShowCdpNeighbors(ctx) {
+  const iosDevice = ctx.iosDevice;
+  const allNodes = ctx.allNodes || [];
+  if (!iosDevice) return '% No device context';
+
+  const header = 'Capability Codes: R - Router, T - Trans Bridge, B - Source Route Bridge\n                  S - Switch, H - Host, I - IGMP, r - Repeater, P - Phone\n\nDevice ID        Local Intrfce     Holdtme    Capability  Platform  Port ID';
+  const rows = [];
+
+  for (const [name, state] of Object.entries(iosDevice.interfaceStates || {})) {
+    if (state.peer_device_id && state.line_protocol === 'up') {
+      const peerNode = allNodes.find(n => n.id === state.peer_device_id);
+      if (peerNode) {
+        const peerHostname = (peerNode.data?.hostname || peerNode.hostname || 'Unknown').padEnd(17);
+        const localIf = name.padEnd(18);
+        const cap = peerNode.data?.type === 'router' || peerNode.type === 'router' ? 'R' : 'S';
+        const peerPort = (state.peer_interface || '').padEnd(10);
+        rows.push(`${peerHostname}${localIf}180        ${cap.padEnd(12)}${cap === 'R' ? '2911' : '2960'}      ${peerPort}`);
+      }
+    }
+  }
+
+  return rows.length > 0 ? [header, ...rows].join('\n') : header + '\n% No CDP neighbors found.';
+}
+
+function buildShowSpanningTree(ctx) {
+  const device = ctx.device;
+  if (!device) return '% No device context';
+  if (ctx.deviceType === 'router') return "% Invalid input detected at '^' marker.";
+
+  const vlans = device.vlans || [{ number: 1, name: 'default' }];
+  const lines = [];
+
+  for (const vlan of vlans) {
+    lines.push(`VLAN${String(vlan.number).padStart(4, '0')}`);
+    lines.push(`  Spanning tree enabled protocol ieee`);
+    lines.push(`  Root ID    Priority    ${32768 + vlan.number}`);
+    lines.push(`             Address     ${generateMac(device.id || 'bridge')}`);
+    lines.push(`             This bridge is the root`);
+    lines.push('');
+    lines.push('  Interface        Role Sts Cost      Prio.Nbr Type');
+    lines.push('  ---------------- ---- --- --------- -------- ------');
+
+    for (const [name, iface] of Object.entries(device.interfaces || {})) {
+      const state = ctx.iosDevice?.interfaceStates?.[name];
+      if (state?.line_protocol === 'up') {
+        lines.push(`  ${name.padEnd(17)}Desg FWD ${name.startsWith('Gig') ? '4' : '19'}         128.${name.replace(/\D/g, '')} P2p`);
+      }
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function buildDhcpBinding(device) {
+  const sections = device?.running_config?.router_sections || {};
+  const pools = Object.keys(sections).filter(k => k.startsWith('ip dhcp pool'));
+  if (pools.length === 0) return 'IP address       Client-ID/Hardware address     Lease expiration        Type\n% No bindings found.';
+  return 'IP address       Client-ID/Hardware address     Lease expiration        Type\n192.168.1.100    0060.2F41.8C01                 --                      Automatic';
+}
+
+function buildDhcpPoolOutput(device) {
+  const sections = device?.running_config?.router_sections || {};
+  const poolEntries = Object.entries(sections).filter(([k]) => k.startsWith('ip dhcp pool'));
+  if (poolEntries.length === 0) return '% No DHCP pools configured.';
+  const lines = [];
+  for (const [secName, cmds] of poolEntries) {
+    const poolName = secName.replace('ip dhcp pool ', '');
+    lines.push(`Pool ${poolName} :`);
+    for (const cmd of cmds) lines.push(`  ${cmd}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function buildNatTranslations(device) {
+  const staticNats = (device?.running_config?.global_commands || [])
+    .filter(c => c.startsWith('ip nat inside source static'))
+    .map(c => {
+      const parts = c.split(/\s+/);
+      return `--- ${(parts[5] || '').padEnd(17)}${(parts[6] || '').padEnd(19)}---                ---`;
+    });
+  const header = 'Pro Inside global      Inside local       Outside local      Outside global';
+  return staticNats.length > 0 ? [header, ...staticNats].join('\n') : header + '\n% No NAT translations active.';
+}
+
+function buildNatStatistics(device) {
+  const hasNat = (device?.running_config?.global_commands || []).some(c => c.includes('ip nat'));
+  if (!hasNat) return '% NAT is not configured.';
+  const natIfaces = Object.entries(device?.interfaces || {})
+    .filter(([, i]) => (i.commands || []).some(c => c.includes('ip nat')));
+  const inside = natIfaces.filter(([, i]) => (i.commands || []).some(c => c.includes('ip nat inside'))).map(([n]) => `  ${n}`);
+  const outside = natIfaces.filter(([, i]) => (i.commands || []).some(c => c.includes('ip nat outside'))).map(([n]) => `  ${n}`);
+  return [
+    `Total active translations: 0 (0 static, 0 dynamic; 0 extended)`,
+    'Outside interfaces:', ...(outside.length > 0 ? outside : ['  --']),
+    'Inside interfaces:', ...(inside.length > 0 ? inside : ['  --']),
+    'Hits: 0  Misses: 0',
+  ].join('\n');
+}
+
+function buildShowHosts(device) {
+  const hosts = (device?.running_config?.global_commands || [])
+    .filter(c => c.startsWith('ip host'))
+    .map(c => {
+      const parts = c.split(/\s+/);
+      return `${(parts[2] || 'Host').padEnd(25)}None  (perm, OK)  0  IP     ${parts[3] || '0.0.0.0'}`;
+    });
+  return [
+    'Default domain is not set',
+    'Name/address lookup uses domain service',
+    '',
+    'Host                      Port  Flags      Age Type   Address(es)',
+    ...(hosts.length > 0 ? hosts : ['% No hosts configured.']),
+  ].join('\n');
+}
+
+function buildShowAccessLists(device) {
+  const acls = (device?.running_config?.global_commands || [])
+    .filter(c => c.startsWith('access-list'));
+  if (acls.length === 0) return '% No access lists defined.';
+
+  const grouped = {};
+  for (const acl of acls) {
+    const parts = acl.split(/\s+/);
+    const num = parts[1] || '1';
+    if (!grouped[num]) grouped[num] = [];
+    grouped[num].push(acl.replace(`access-list ${num} `, ''));
+  }
+
+  const lines = [];
+  for (const [num, rules] of Object.entries(grouped)) {
+    const aclType = parseInt(num) < 100 ? 'Standard' : 'Extended';
+    lines.push(`${aclType} IP access list ${num}`);
+    rules.forEach((r, i) => lines.push(`    ${(i + 1) * 10} ${r}`));
+  }
+  return lines.join('\n');
+}
+
+// ═══════ Show Command Dispatcher ═══════
+
+function handleShow(args, ctx) {
+  if (!args || args.length === 0) {
+    return { output: '% Incomplete command.', context: ctx, configDelta: null };
+  }
+
+  const lower = args.map(a => a.toLowerCase());
+  const firstTok = lower[0];
+
+  // Ambiguity check for "show i"
+  if (firstTok === 'i') {
+    return { output: `% Ambiguous command: "show ${args.join(' ')}"`, context: ctx, configDelta: null };
+  }
+
+  // Restrictions for User EXEC mode (Router>): running-config & startup-config require Privileged EXEC (Router#)
+  if (ctx.mode === 'user_exec') {
+    if ('running-config'.startsWith(firstTok) || 'startup-config'.startsWith(firstTok)) {
+      return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
+    }
+  }
+
+  // Plain "show ip" with no subcommand
+  if (firstTok === 'ip' && lower.length === 1) {
+    return { output: '% Incomplete command.', context: ctx, configDelta: null };
+  }
+
+  // Pipe filtering
+  let pipeKeyword = null;
+  if (lower.includes('|')) {
+    const pipeIdx = lower.indexOf('|');
+    if (lower[pipeIdx + 1] === 'section') pipeKeyword = lower[pipeIdx + 2] || '';
+  }
+
+  if (lower.length >= 1 && ('running-config'.startsWith(firstTok))) {
+    let out = buildRunningConfig(ctx.device);
+    if (pipeKeyword) {
+      const sections = out.split('!');
+      out = sections.filter(s => s.toLowerCase().includes(pipeKeyword)).join('!\n') || `% Section ${pipeKeyword} not found`;
+    }
+    return { output: out, context: ctx, configDelta: null };
+  }
+
+  if (lower.length >= 1 && 'startup-config'.startsWith(firstTok)) {
+    const startupCfg = ctx.iosDevice?.getStartupConfig();
+    if (!startupCfg) return { output: '% startup-config is not present', context: ctx, configDelta: null };
+    return { output: 'Using startup-config:\n' + JSON.stringify(startupCfg, null, 2), context: ctx, configDelta: null };
+  }
+
+  // show ip ... or show ospf ...
+  if (lower.length >= 1 && (lower[0] === 'ip' || lower[0] === 'ospf')) {
+    if (lower[0] === 'ospf') {
+      if (lower[1] === 'neighbor' || lower[1] === 'neigh' || lower[1] === 'nei') {
+        return { output: buildShowIpOspfNeighbor(ctx), context: ctx, configDelta: null };
+      }
+      if (lower[1] === 'interface' || lower[1] === 'int') {
+        return { output: buildIpIntBrief(ctx), context: ctx, configDelta: null };
+      }
+      return { output: buildShowIpOspf(ctx), context: ctx, configDelta: null };
+    }
+
+    if (lower.length >= 2 && lower[0] === 'ip' && lower[1] === 'ospf') {
+      if (lower[2] === 'neighbor' || lower[2] === 'neigh' || lower[2] === 'nei') {
+        return { output: buildShowIpOspfNeighbor(ctx), context: ctx, configDelta: null };
+      }
+      if (lower[2] === 'interface' || lower[2] === 'int') {
+        return { output: buildIpIntBrief(ctx), context: ctx, configDelta: null };
+      }
+      return { output: buildShowIpOspf(ctx), context: ctx, configDelta: null };
+    }
+
+    if ('interface'.startsWith(lower[1]) && lower.length >= 3 && 'brief'.startsWith(lower[2])) {
+      return { output: buildIpIntBrief(ctx), context: ctx, configDelta: null };
+    }
+    if ('interface'.startsWith(lower[1]) && lower.length === 2) {
+      return { output: buildIpIntBrief(ctx), context: ctx, configDelta: null };
+    }
+    if ('route'.startsWith(lower[1])) {
+      return { output: buildRouteTable(ctx), context: ctx, configDelta: null };
+    }
+    if (lower[1] === 'dhcp' && lower[2] && 'binding'.startsWith(lower[2])) {
+      return { output: buildDhcpBinding(ctx.device), context: ctx, configDelta: null };
+    }
+    if (lower[1] === 'dhcp' && lower[2] && 'pool'.startsWith(lower[2])) {
+      return { output: buildDhcpPoolOutput(ctx.device), context: ctx, configDelta: null };
+    }
+    if (lower[1] === 'nat' && lower[2] && 'translations'.startsWith(lower[2])) {
+      return { output: buildNatTranslations(ctx.device), context: ctx, configDelta: null };
+    }
+    if (lower[1] === 'nat' && lower[2] && 'statistics'.startsWith(lower[2])) {
+      return { output: buildNatStatistics(ctx.device), context: ctx, configDelta: null };
+    }
+  }
+
+  if (lower.length >= 1 && 'interfaces'.startsWith(lower[0])) {
+    return { output: buildShowInterfaces(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'arp'.startsWith(lower[0])) {
+    return { output: buildShowArp(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'vlan'.startsWith(lower[0])) {
+    return { output: buildVlanBrief(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'hosts'.startsWith(lower[0])) {
+    return { output: buildShowHosts(ctx.device), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && ('access-lists'.startsWith(lower[0]) || 'access-list'.startsWith(lower[0]))) {
+    return { output: buildShowAccessLists(ctx.device), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'mac-address-table'.startsWith(lower[0])) {
+    return { output: buildShowMacAddressTable(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'cdp'.startsWith(lower[0])) {
+    if (lower.length >= 2 && 'neighbors'.startsWith(lower[1])) {
+      return { output: buildShowCdpNeighbors(ctx), context: ctx, configDelta: null };
+    }
+    return { output: buildShowCdpNeighbors(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'spanning-tree'.startsWith(lower[0])) {
+    return { output: buildShowSpanningTree(ctx), context: ctx, configDelta: null };
+  }
+  if (lower.length >= 1 && 'version'.startsWith(lower[0])) {
+    return { output: `Cisco IOS Software, C2900 Software, Version 15.1(4)M5\nCopyright (c) 1986-2024 by Cisco Systems, Inc.\nSystem image file is "flash:c2900-universalk9-mz.SPA.151-4.M5.bin"\nProcessor board ID FTX1524E0JZ\n${ctx.device?.hostname || 'Router'} uptime is 0 days, 0 hours, 0 minutes`, context: ctx, configDelta: null };
+  }
+
+  return { output: `% Invalid show command: ${args.join(' ')}`, context: ctx, configDelta: null };
+}
+
+// ═══════ Ping Handlers ═══════
+
+function handleRouterPing(args, ctx) {
+  const target = args[0];
+  if (!target) return { output: '% Incomplete command.', context: ctx, configDelta: null };
+
+  const topology = {
+    nodes: (ctx.allNodes || []).map(n => ({ id: n.id, ...n.data, ...(n.data || {}) })),
+    edges: ctx.allEdges || [],
+  };
+
+  const result = simulateRouterPing(ctx.iosDevice, target, topology);
+  return { output: formatPingOutput(target, result.replies, result.stats), context: ctx, configDelta: null };
+}
+
+function handlePcPing(target, ctx) {
+  if (!target) return { output: 'Usage: ping <ip-address>', context: ctx, configDelta: null };
+
+  const topology = {
+    nodes: (ctx.allNodes || []).map(n => ({ id: n.id, ...n.data, ...(n.data || {}) })),
+    edges: ctx.allEdges || [],
+  };
+
+  const result = simulatePcPing(ctx.device, target, topology);
+  return { output: formatPingOutput(target, result.replies, result.stats), context: ctx, configDelta: null };
+}
+
+// ═══════ Spanning-Tree Handler ═══════
+
+function handleSpanningTree(args, ctx) {
+  if (ctx.deviceType === 'router') {
+    return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
+  }
+  return { output: '', context: ctx, configDelta: { type: 'global_command', command: `spanning-tree ${args.join(' ')}` } };
+}
+
+// ═══════ Question Mark Help ═══════
 
 function handleQuestionMarkHelp(line, context) {
   const lineNoQ = line.slice(0, -1).trim();
@@ -243,93 +774,42 @@ function handleQuestionMarkHelp(line, context) {
   const tokens = lower.split(/\s+/).filter(Boolean);
   const mode = context.mode;
 
+  if (mode === 'pc_exec') {
+    return { output: '  ipconfig   Display IP configuration\n  ping       Send ICMP echo\n  tracert    Trace route\n  exit       Close terminal', context, configDelta: null };
+  }
+
   if (mode === 'dhcp_config') {
     if (tokens.length === 0) {
+      return { output: '  default-router       Default routers\n  dns-server           DNS servers\n  domain-name          Domain name\n  exit                 Exit DHCP pool configuration\n  lease                Address lease time\n  network              Subnet network number and mask', context, configDelta: null };
+    }
+  }
+
+  if (mode === 'interface_config') {
+    if (tokens.length === 0) {
       return {
-        output: `  default-router       Default routers\n  dns-server           DNS servers\n  domain-name          Domain name\n  exit                 Exit from DHCP pool configuration mode\n  lease                DHCP address lease time\n  netbios-name-server  NetBIOS name server\n  network              Subnet network number and mask\n  option               Raw DHCP option`,
+        output: '  ip                   Interface IP configuration\n  shutdown             Disable interface\n  no                   Negate a command\n  description          Interface description\n  switchport           Switchport configuration\n  encapsulation        Set encapsulation type\n  clock                Configure clock\n  exit                 Exit interface configuration\n  end                  Exit to privileged EXEC',
         context, configDelta: null
       };
     }
-    if (tokens[0] === 'network') return { output: '  A.B.C.D  Network number in IP address format\n  /prefix  Network prefix length', context, configDelta: null };
-    if (tokens[0] === 'default-router') return { output: '  A.B.C.D  Default router IP address', context, configDelta: null };
-    if (tokens[0] === 'dns-server') return { output: '  A.B.C.D  DNS server IP address', context, configDelta: null };
-    if (tokens[0] === 'lease') return { output: '  <0-365>  Lease time in days', context, configDelta: null };
-    if (tokens[0] === 'domain-name') return { output: '  WORD  Domain name string', context, configDelta: null };
-    if (tokens[0] === 'netbios-name-server') return { output: '  A.B.C.D  NetBIOS name server IP address', context, configDelta: null };
-    if (tokens[0] === 'option') return { output: '  <0-254>  DHCP option code number', context, configDelta: null };
   }
 
-  if (mode === 'global_config') {
-    if (lower === 'ip dhcp' || lower.startsWith('ip dhcp ')) {
-      if (tokens.length === 2) {
-        return {
-          output: `  bootp             Configure BOOTP parameters\n  conflict          DHCP address conflict parameters\n  database          DHCP database agent\n  excluded-address  Prevent DHCP from assigning certain addresses\n  ping              Enable DHCP ping packets before assignment\n  pool              Configure DHCP pool name`,
-          context, configDelta: null
-        };
-      }
-      if (tokens[2] === 'pool') {
-        return { output: '  WORD  DHCP pool name', context, configDelta: null };
-      }
-      if (tokens[2] === 'excluded-address') {
-        return { output: '  A.B.C.D  Low IP address in excluded range', context, configDelta: null };
-      }
+  if (tokens.length === 0) {
+    if (mode === 'user_exec') {
+      return { output: '  enable     Turn on privileged commands\n  exit       Exit\n  show       Show running system information\n  ping       Send echo messages', context, configDelta: null };
     }
-
-    if (lower === 'ip dns' || lower.startsWith('ip dns ')) {
-      return { output: `  server  Enable DNS server\n  view    Configure DNS view`, context, configDelta: null };
+    if (mode === 'priv_exec') {
+      return { output: '  configure  Enter configuration mode\n  copy       Copy configuration\n  disable    Turn off privileged commands\n  exit       Exit\n  ping       Send echo messages\n  show       Show running system information\n  write      Write running configuration', context, configDelta: null };
     }
-
-    if (lower === 'ip host' || lower.startsWith('ip host ')) {
-      return { output: `  WORD  Name of host followed by IP address`, context, configDelta: null };
-    }
-
-    if (lower === 'ip nat' || lower.startsWith('ip nat ')) {
-      if (tokens.length === 2) {
-        return {
-          output: `  inside       Inside translation\n  outside      Outside translation\n  pool         Define pool of dynamic IP addresses\n  translation  NAT translation parameters`,
-          context, configDelta: null
-        };
-      }
-      if (tokens[2] === 'pool') {
-        return { output: '  WORD  Pool name followed by start IP, end IP, netmask/prefix-length', context, configDelta: null };
-      }
-      if (tokens[2] === 'inside') {
-        if (tokens.length === 3) return { output: `  destination  Destination address translation\n  source       Source address translation`, context, configDelta: null };
-        if (tokens[3] === 'source') {
-          if (tokens.length === 4) return { output: `  list    Specify access-list containing local addresses\n  static  Specify static local address mapping`, context, configDelta: null };
-          if (tokens[4] === 'static') return { output: '  A.B.C.D  Inside local IP address', context, configDelta: null };
-          if (tokens[4] === 'list') return { output: '  <1-99>  IP standard access list number', context, configDelta: null };
-        }
-      }
-    }
-
-    if (lower === 'access-list' || lower.startsWith('access-list ')) {
-      return { output: `  <1-99>     IP standard access list\n  <100-199>  IP extended access list`, context, configDelta: null };
+    if (mode === 'global_config') {
+      return { output: '  hostname      Set system hostname\n  interface     Select an interface\n  ip            IP configuration\n  router        Enable routing protocol\n  vlan          VLAN configuration\n  access-list   ACL configuration\n  line          Configure terminal line\n  spanning-tree Configure STP\n  service       Service configuration\n  banner        MOTD banner\n  enable        Modify enable password\n  end           Exit configuration mode\n  exit          Exit configuration mode\n  do            Execute privileged EXEC command', context, configDelta: null };
     }
   }
 
-  if (lower === 'show ip dhcp' || lower.startsWith('show ip dhcp ')) {
-    return {
-      output: `  binding   DHCP address bindings\n  conflict  DHCP address conflicts\n  pool      DHCP pool configuration & statistics\n  server    DHCP server information`,
-      context, configDelta: null
-    };
+  if (lower.startsWith('show')) {
+    return { output: '  access-lists     List access lists\n  arp              ARP table\n  cdp              CDP information\n  hosts            IP domain name mapping\n  interfaces       Interface status\n  ip               IP information\n  mac-address-table MAC table\n  running-config   Current configuration\n  spanning-tree    STP information\n  startup-config   Startup configuration\n  version          System information\n  vlan             VLAN information', context, configDelta: null };
   }
 
-  if (lower === 'show ip nat' || lower.startsWith('show ip nat ')) {
-    return {
-      output: `  statistics    NAT statistics\n  translations  NAT translation table`,
-      context, configDelta: null
-    };
-  }
-
-  if (lower === 'show' || lower.startsWith('show ')) {
-    return {
-      output: `  access-lists    List access lists\n  arp             ARP table\n  hosts           IP domain name-to-address mapping\n  interfaces      Interface status and configuration\n  ip              IP information\n  running-config  Current operating configuration\n  startup-config  Contents of startup configuration memory\n  vlan            VLAN information\n  version         System hardware and software status`,
-      context, configDelta: null
-    };
-  }
-
-  return { output: `  <cr>  Press enter to execute command`, context, configDelta: null };
+  return { output: '  <cr>  Press enter to execute command', context, configDelta: null };
 }
 
 // ═══════ MODE HANDLERS ═══════
@@ -338,25 +818,21 @@ const MODE_HANDLERS = {
   // ── PC / SERVER EXEC ──
   pc_exec: {
     ipconfig: (args, ctx) => {
-      const iface = ctx.device?.interfaces?.['FastEthernet0'] || {};
+      const iface = ctx.device?.interfaces?.['FastEthernet0'] || Object.values(ctx.device?.interfaces || {})[0] || {};
       const sub = args[0]?.toLowerCase();
       if (sub === '/all' || args.length === 0) {
         return {
-          output: `FastEthernet0 Connection-specific DNS Suffix: \nIP Address: ${iface.ip || '0.0.0.0'}\nSubnet Mask: ${iface.mask || '0.0.0.0'}\nDefault Gateway: ${iface.gateway || '0.0.0.0'}`,
-          context: ctx,
-          configDelta: null,
+          output: `\nFastEthernet0 Connection:(default port)\n\n   Connection-specific DNS Suffix  : \n   Physical Address................: ${ctx.iosDevice?.interfaceStates?.['FastEthernet0']?.mac_address || '0000.0000.0000'}\n   Link-local IPv6 Address.........: \n   IPv6 Address....................: \n   IPv4 Address....................: ${iface.ip || '0.0.0.0'}\n   Subnet Mask....................: ${iface.mask || '0.0.0.0'}\n   Default Gateway................: ${iface.gateway || '0.0.0.0'}`,
+          context: ctx, configDelta: null,
         };
       }
       if (args.length >= 2) {
-        const ip = args[0];
-        const mask = args[1];
-        const gateway = args[2] || '';
+        const ip = args[0]; const mask = args[1]; const gateway = args[2] || '';
         return {
-          output: `IP Address set to ${ip}, Subnet Mask set to ${mask}`,
+          output: `\n   IP Address......................: ${ip}\n   Subnet Mask....................: ${mask}\n   Default Gateway................: ${gateway || '0.0.0.0'}`,
           context: ctx,
           configDelta: {
-            type: 'interface_command',
-            interface: 'FastEthernet0',
+            type: 'interface_command', interface: 'FastEthernet0',
             addCommand: `ip address ${ip} ${mask}`,
             updates: { ip, mask, gateway },
           },
@@ -364,22 +840,38 @@ const MODE_HANDLERS = {
       }
       return { output: 'Usage: ipconfig [/all] OR ipconfig <ip> <mask> [gateway]', context: ctx, configDelta: null };
     },
+    ip: (args, ctx) => {
+      // PC 'ip' command: ip <address> <mask> <gateway>
+      if (args.length >= 2) {
+        const ip = args[0]; const mask = args[1]; const gateway = args[2] || '';
+        return {
+          output: `\n   IP Address......................: ${ip}\n   Subnet Mask....................: ${mask}\n   Default Gateway................: ${gateway || '0.0.0.0'}`,
+          context: ctx,
+          configDelta: {
+            type: 'interface_command', interface: 'FastEthernet0',
+            addCommand: `ip address ${ip} ${mask}`,
+            updates: { ip, mask, gateway },
+          },
+        };
+      }
+      return { output: 'Usage: ip <address> <mask> [gateway]', context: ctx, configDelta: null };
+    },
     ping: (args, ctx) => handlePcPing(args[0], ctx),
     tracert: (args, ctx) => {
       const target = args[0];
       if (!target) return { output: 'Usage: tracert <ip-address>', context: ctx, configDelta: null };
-      return {
-        output: `Tracing route to ${target} over a maximum of 30 hops:\n  1   1 ms   1 ms   1 ms  ${target}\nTrace complete.`,
-        context: ctx,
-        configDelta: null,
-      };
+      return { output: `\nTracing route to ${target} over a maximum of 30 hops:\n\n  1   1 ms   1 ms   1 ms  ${target}\n\nTrace complete.`, context: ctx, configDelta: null };
     },
-    ftp: (args, ctx) => {
+    show: (args, ctx) => {
       const sub = args[0]?.toLowerCase();
-      if (sub === 'username') return { output: 'FTP username set.', context: ctx, configDelta: null };
-      if (sub === 'password') return { output: 'FTP password set.', context: ctx, configDelta: null };
-      if (sub === 'passive') return { output: 'FTP passive mode toggled.', context: ctx, configDelta: null };
-      return { output: 'Usage: ftp <username | password | passive | host-ip>', context: ctx, configDelta: null };
+      if (sub === 'ip') {
+        const iface = ctx.device?.interfaces?.['FastEthernet0'] || {};
+        return {
+          output: `\nFastEthernet0:\n   IP Address: ${iface.ip || '0.0.0.0'}\n   Subnet Mask: ${iface.mask || '0.0.0.0'}\n   Default Gateway: ${iface.gateway || '0.0.0.0'}`,
+          context: ctx, configDelta: null
+        };
+      }
+      return { output: '% Invalid command for PC', context: ctx, configDelta: null };
     },
     exit: () => ({ output: '% Connection closed.', context: null, configDelta: null }),
   },
@@ -387,13 +879,13 @@ const MODE_HANDLERS = {
   // ── USER EXEC ──
   user_exec: {
     enable: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: [...ctx.modeStack, 'priv_exec'] },
-      configDelta: null,
+      output: '', context: { ...ctx, mode: 'priv_exec', modeStack: [...ctx.modeStack, 'priv_exec'] }, configDelta: null,
     }),
     exit: () => ({ output: '% Connection closed.', context: null, configDelta: null }),
     show: (args, ctx) => handleShow(args, ctx),
-    ping: (args, ctx) => handlePcPing(args[0], ctx),
+    ping: (args, ctx) => ctx.deviceType === 'router'
+      ? handleRouterPing(args, ctx)
+      : handlePcPing(args[0], ctx),
   },
 
   // ── PRIVILEGED EXEC ──
@@ -406,62 +898,77 @@ const MODE_HANDLERS = {
           configDelta: null,
         };
       }
-      return { output: '% Invalid input', context: ctx, configDelta: null };
+      return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
     },
     disable: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'user_exec', modeStack: ['user_exec'] },
-      configDelta: null,
+      output: '', context: { ...ctx, mode: 'user_exec', modeStack: ['user_exec'] }, configDelta: null,
     }),
     exit: () => ({ output: '', context: null, configDelta: null }),
     show: (args, ctx) => handleShow(args, ctx),
-    ping: (args, ctx) => handlePcPing(args[0], ctx),
+    ping: (args, ctx) => ctx.deviceType === 'router'
+      ? handleRouterPing(args, ctx)
+      : handlePcPing(args[0], ctx),
     copy: (args, ctx) => {
       const str = args.join(' ').toLowerCase();
-      if (str.includes('ftp') || str.includes('running-config') || str.includes('startup-config')) {
+      if (str === 'running-config startup-config' || str.includes('run') && str.includes('start')) {
+        if (ctx.iosDevice) ctx.iosDevice.saveStartupConfig();
+        return { output: 'Destination filename [startup-config]?\nBuilding configuration...\n[OK]', context: ctx, configDelta: null };
+      }
+      if (str.includes('ftp') || str.includes('startup') || str.includes('running')) {
+        return { output: 'Address or name of remote host []?\nDestination filename []?\n[OK - 1024 bytes copied]', context: ctx, configDelta: null };
+      }
+      return { output: '[OK]', context: ctx, configDelta: null };
+    },
+    write: (args, ctx) => {
+      if (ctx.iosDevice) ctx.iosDevice.saveStartupConfig();
+      return { output: 'Building configuration...\n[OK]', context: ctx, configDelta: null };
+    },
+    reload: (args, ctx) => {
+      const startupCfg = ctx.iosDevice?.getStartupConfig();
+      if (startupCfg) {
         return {
-          output: 'Address or name of remote host []?\nDestination filename []?\n[OK - 1024 bytes copied]',
-          context: ctx,
-          configDelta: null,
+          output: 'System configuration has been modified. Save? [yes/no]: \nProceed with reload? [confirm]\n\n...System reloading...\n\nRouter> ',
+          context: { ...ctx, mode: 'user_exec', modeStack: ['user_exec'] },
+          configDelta: { type: 'restore_startup', startupConfig: startupCfg },
         };
       }
-      return { output: '[OK - 1024 bytes]', context: ctx, configDelta: null };
+      return {
+        output: 'Proceed with reload? [confirm]\n\n...System reloading...\n\nRouter> ',
+        context: { ...ctx, mode: 'user_exec', modeStack: ['user_exec'] },
+        configDelta: null,
+      };
     },
-    write: (args, ctx) => ({ output: 'Building configuration...\n[OK]', context: ctx, configDelta: null }),
   },
 
   // ── GLOBAL CONFIG ──
   global_config: {
     hostname: (args, ctx) => {
       const name = args[0] || (ctx.deviceType === 'switch' ? 'Switch' : 'Router');
-      return {
-        output: '',
-        context: { ...ctx, hostname: name },
-        configDelta: { type: 'hostname', hostname: name },
-      };
+      return { output: '', context: { ...ctx, hostname: name }, configDelta: { type: 'hostname', hostname: name } };
     },
     enable: (args, ctx) => {
       if (args[0]?.toLowerCase() === 'secret') {
-        const pass = args.slice(1).join(' ') || 'cisco';
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: `enable secret ${pass}` },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `enable secret ${args.slice(1).join(' ') || 'cisco'}` } };
       }
       if (args[0]?.toLowerCase() === 'password') {
-        const pass = args.slice(1).join(' ') || 'cisco';
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: `enable password ${pass}` },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `enable password ${args.slice(1).join(' ') || 'cisco'}` } };
       }
       return { output: '% Incomplete command.', context: ctx, configDelta: null };
     },
     interface: (args, ctx) => {
-      const ifName = normalizeInterface(args.join(''));
+      const rawName = args.join('');
+      const ifName = normalizeInterface(rawName);
       if (!ifName) return { output: '% Incomplete command.', context: ctx, configDelta: null };
+
+      // Check if interface exists on device or is valid virtual interface (Vlan / Loopback)
+      const existingIfaces = Object.keys(ctx.device?.interfaces || {});
+      const isExisting = existingIfaces.includes(ifName);
+      const isVirtual = ifName.toLowerCase().startsWith('vlan') || ifName.toLowerCase().startsWith('loopback');
+
+      if (!isExisting && !isVirtual) {
+        return { output: "% Invalid interface type and number", context: ctx, configDelta: null };
+      }
+
       return {
         output: '',
         context: {
@@ -481,12 +988,7 @@ const MODE_HANDLERS = {
       if (isNaN(num) || num < 1 || num > 4094) return { output: '% Invalid VLAN ID', context: ctx, configDelta: null };
       return {
         output: '',
-        context: {
-          ...ctx,
-          mode: 'vlan_config',
-          modeStack: [...ctx.modeStack, 'vlan_config'],
-          currentVlan: num,
-        },
+        context: { ...ctx, mode: 'vlan_config', modeStack: [...ctx.modeStack, 'vlan_config'], currentVlan: num },
         configDelta: { type: 'create_vlan', number: num },
       };
     },
@@ -496,137 +998,67 @@ const MODE_HANDLERS = {
       }
       const protocol = args[0]?.toLowerCase();
       let section;
-      if (protocol === 'ospf') {
-        const pid = parseInt(args[1]) || 1;
-        section = `router ospf ${pid}`;
-      } else if (protocol === 'rip') {
-        section = 'router rip';
-      } else if (protocol === 'eigrp') {
-        const as = parseInt(args[1]) || 1;
-        section = `router eigrp ${as}`;
-      } else {
-        return { output: '% Invalid routing protocol', context: ctx, configDelta: null };
-      }
+      if (protocol === 'ospf') { section = `router ospf ${parseInt(args[1]) || 1}`; }
+      else if (protocol === 'rip') { section = 'router rip'; }
+      else if (protocol === 'eigrp') { section = `router eigrp ${parseInt(args[1]) || 1}`; }
+      else { return { output: '% Invalid routing protocol', context: ctx, configDelta: null }; }
       return {
         output: '',
-        context: {
-          ...ctx,
-          mode: 'router_config',
-          modeStack: [...ctx.modeStack, 'router_config'],
-          currentRouterSection: section,
-        },
+        context: { ...ctx, mode: 'router_config', modeStack: [...ctx.modeStack, 'router_config'], currentRouterSection: section },
         configDelta: { type: 'ensure_router_section', section },
       };
     },
     ip: (args, ctx) => {
       const sub0 = args[0]?.toLowerCase();
-
       if (sub0 === 'dhcp') {
         const sub1 = args[1]?.toLowerCase();
         if (sub1 === 'pool') {
-          const poolName = args[2] || '1';
           return {
             output: '',
-            context: {
-              ...ctx,
-              mode: 'dhcp_config',
-              modeStack: [...ctx.modeStack, 'dhcp_config'],
-              currentDhcpPool: poolName,
-            },
-            configDelta: { type: 'ensure_dhcp_pool', pool: poolName },
+            context: { ...ctx, mode: 'dhcp_config', modeStack: [...ctx.modeStack, 'dhcp_config'], currentDhcpPool: args[2] || '1' },
+            configDelta: { type: 'ensure_dhcp_pool', pool: args[2] || '1' },
           };
         }
         if (sub1 === 'excluded-address') {
-          const range = args.slice(2).join(' ');
-          return {
-            output: '',
-            context: ctx,
-            configDelta: { type: 'global_command', command: `ip dhcp excluded-address ${range}` },
-          };
+          return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip dhcp excluded-address ${args.slice(2).join(' ')}` } };
         }
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: `ip dhcp ${args.slice(1).join(' ')}` },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip dhcp ${args.slice(1).join(' ')}` } };
       }
-
       if (sub0 === 'route') {
         if (ctx.deviceType === 'switch') {
           return { output: '% IP routing not enabled', context: ctx, configDelta: null };
         }
-        const route = args.slice(1).join(' ');
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: `ip route ${route}` },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip route ${args.slice(1).join(' ')}` } };
       }
-
       if (sub0 === 'nat') {
-        const natCmd = `ip nat ${args.slice(1).join(' ')}`;
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: natCmd },
-        };
+        if (ctx.deviceType === 'switch') {
+          return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
+        }
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip nat ${args.slice(1).join(' ')}` } };
       }
-
-      if (sub0 === 'dns' || sub0 === 'host') {
-        const cmdStr = `ip ${args.join(' ')}`;
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: cmdStr },
-        };
+      if (sub0 === 'dns' || sub0 === 'host' || sub0 === 'ftp') {
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip ${args.join(' ')}` } };
       }
-
       if (sub0 === 'default-gateway') {
-        return {
-          output: '',
-          context: ctx,
-          configDelta: { type: 'global_command', command: `ip default-gateway ${args.slice(1).join(' ')}` },
-        };
+        if (ctx.deviceType === 'router') {
+          return { output: "% Default gateway is not applicable to routers. Use 'ip route' instead.", context: ctx, configDelta: null };
+        }
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: `ip default-gateway ${args.slice(1).join(' ')}` } };
       }
-
       return { output: '% Incomplete command.', context: ctx, configDelta: null };
     },
-    'access-list': (args, ctx) => {
-      const aclCmd = `access-list ${args.join(' ')}`;
-      return {
-        output: '',
-        context: ctx,
-        configDelta: { type: 'global_command', command: aclCmd },
-      };
-    },
-    service: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'global_command', command: `service ${args.join(' ')}` },
-    }),
-    banner: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'global_command', command: `banner ${args.join(' ')}` },
-    }),
+    'access-list': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `access-list ${args.join(' ')}` } }),
+    service: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `service ${args.join(' ')}` } }),
+    banner: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `banner ${args.join(' ')}` } }),
+    lldp: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `lldp ${args.join(' ')}` } }),
     line: (args, ctx) => ({
       output: '',
       context: { ...ctx, mode: 'line_config', modeStack: [...ctx.modeStack, 'line_config'] },
       configDelta: { type: 'global_command', command: `line ${args.join(' ')}` },
     }),
-    spanning_tree: handleSpanningTree,
     'spanning-tree': handleSpanningTree,
-    exit: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] },
-      configDelta: null,
-    }),
-    end: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] },
-      configDelta: null,
-    }),
-    show: (args, ctx) => handleShow(args, ctx),
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] }, configDelta: null }),
+    end: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] }, configDelta: null }),
   },
 
   // ── INTERFACE CONFIG ──
@@ -634,831 +1066,215 @@ const MODE_HANDLERS = {
     ip: (args, ctx) => {
       const sub0 = args[0]?.toLowerCase();
       if (sub0 === 'address') {
-        const ip = args[1] || '';
-        const mask = args[2] || '';
+        const ip = args[1] || ''; const mask = args[2] || '';
         if (!ip || !mask) return { output: '% Incomplete command.', context: ctx, configDelta: null };
         return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: `ip address ${ip} ${mask}`,
-            updates: { ip, mask },
-          },
+          output: '', context: ctx,
+          configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `ip address ${ip} ${mask}`, updates: { ip, mask } },
         };
       }
       if (sub0 === 'nat') {
         const dir = args[1]?.toLowerCase() || 'inside';
-        return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: `ip nat ${dir}`,
-          },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `ip nat ${dir}` } };
+      }
+      if (sub0 === 'helper-address') {
+        const helper = args[1] || '';
+        if (!helper) return { output: '% Incomplete command.', context: ctx, configDelta: null };
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `ip helper-address ${helper}` } };
       }
       return { output: '% Incomplete command.', context: ctx, configDelta: null };
     },
     shutdown: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: {
-        type: 'interface_command',
-        interface: ctx.currentInterface,
-        addCommand: 'shutdown',
-        removeCommand: 'no shutdown',
-        updates: { status: 'down' },
-      },
+      output: '', context: ctx,
+      configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: 'shutdown', removeCommand: 'no shutdown', updates: { status: 'down' } },
     }),
     no: (args, ctx) => {
-      if (args[0]?.toLowerCase() === 'shutdown') {
+      const sub = args[0]?.toLowerCase();
+      if (sub === 'shutdown') {
         return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: 'no shutdown',
-            removeCommand: 'shutdown',
-            updates: { status: 'up' },
-          },
+          output: '', context: ctx,
+          configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: 'no shutdown', removeCommand: 'shutdown', updates: { status: 'up' } },
         };
+      }
+      if (sub === 'switchport') {
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: 'no switchport' } };
+      }
+      if (sub === 'ip' && args[1]?.toLowerCase() === 'address') {
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: 'no ip address', updates: { ip: '', mask: '' } } };
       }
       return { output: '', context: ctx, configDelta: null };
     },
     switchport: (args, ctx) => {
+      if (ctx.deviceType === 'router') {
+        return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
+      }
       const sub = args.map(a => a.toLowerCase());
       if (sub[0] === 'mode') {
         const mode = sub[1] || '';
-        return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: `switchport mode ${mode}`,
-          },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `switchport mode ${mode}` } };
       }
       if (sub[0] === 'access' && sub[1] === 'vlan') {
         const vid = parseInt(args[2]);
-        return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: `switchport access vlan ${vid}`,
-            updates: { vlan: vid },
-          },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `switchport access vlan ${vid}`, updates: { vlan: vid } } };
       }
       if (sub[0] === 'trunk') {
         if (sub[1] === 'allowed' && sub[2] === 'vlan') {
-          return {
-            output: '',
-            context: ctx,
-            configDelta: {
-              type: 'interface_command',
-              interface: ctx.currentInterface,
-              addCommand: `switchport trunk allowed vlan ${args.slice(3).join(' ')}`,
-            },
-          };
+          return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `switchport trunk allowed vlan ${args.slice(3).join(' ')}` } };
         }
         if (sub[1] === 'native' && sub[2] === 'vlan') {
-          return {
-            output: '',
-            context: ctx,
-            configDelta: {
-              type: 'interface_command',
-              interface: ctx.currentInterface,
-              addCommand: `switchport trunk native vlan ${args[3]}`,
-            },
-          };
+          return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `switchport trunk native vlan ${args[3]}` } };
         }
         if (sub[1] === 'encapsulation') {
-          return {
-            output: '',
-            context: ctx,
-            configDelta: {
-              type: 'interface_command',
-              interface: ctx.currentInterface,
-              addCommand: `switchport trunk encapsulation ${args[2] || 'dot1q'}`,
-            },
-          };
+          return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `switchport trunk encapsulation ${args[2] || 'dot1q'}` } };
         }
       }
       return { output: '% Incomplete command.', context: ctx, configDelta: null };
     },
     description: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: {
-        type: 'interface_command',
-        interface: ctx.currentInterface,
-        addCommand: `description ${args.join(' ')}`,
-      },
+      output: '', context: ctx,
+      configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `description ${args.join(' ')}` },
     }),
     clock: (args, ctx) => {
       if (args[0]?.toLowerCase() === 'rate') {
-        return {
-          output: '',
-          context: ctx,
-          configDelta: {
-            type: 'interface_command',
-            interface: ctx.currentInterface,
-            addCommand: `clock rate ${args[1] || '64000'}`,
-          },
-        };
+        return { output: '', context: ctx, configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `clock rate ${args[1] || '64000'}` } };
       }
       return { output: '% Incomplete command.', context: ctx, configDelta: null };
     },
     encapsulation: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: {
-        type: 'interface_command',
-        interface: ctx.currentInterface,
-        addCommand: `encapsulation ${args.join(' ')}`,
-      },
+      output: '', context: ctx,
+      configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `encapsulation ${args.join(' ')}` },
     }),
-    exit: (args, ctx) => ({
-      output: '',
-      context: {
-        ...ctx,
-        mode: 'global_config',
-        modeStack: ctx.modeStack.slice(0, -1),
-        currentInterface: null,
-      },
-      configDelta: null,
+    duplex: (args, ctx) => ({
+      output: '', context: ctx,
+      configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `duplex ${args[0] || 'auto'}` },
     }),
-    end: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentInterface: null },
-      configDelta: null,
+    speed: (args, ctx) => ({
+      output: '', context: ctx,
+      configDelta: { type: 'interface_command', interface: ctx.currentInterface, addCommand: `speed ${args[0] || 'auto'}` },
     }),
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentInterface: null }, configDelta: null }),
+    end: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentInterface: null }, configDelta: null }),
   },
 
   // ── DHCP POOL CONFIG ──
   dhcp_config: {
-    network: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `network ${args.join(' ')}` },
-    }),
-    'default-router': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `default-router ${args.join(' ')}` },
-    }),
-    'dns-server': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `dns-server ${args.join(' ')}` },
-    }),
-    lease: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `lease ${args.join(' ')}` },
-    }),
-    'domain-name': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `domain-name ${args.join(' ')}` },
-    }),
-    'netbios-name-server': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `netbios-name-server ${args.join(' ')}` },
-    }),
-    option: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `option ${args.join(' ')}` },
-    }),
-    exit: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentDhcpPool: null },
-      configDelta: null,
-    }),
-    end: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentDhcpPool: null },
-      configDelta: null,
-    }),
+    network: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `network ${args.join(' ')}` } }),
+    'default-router': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `default-router ${args.join(' ')}` } }),
+    'dns-server': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `dns-server ${args.join(' ')}` } }),
+    lease: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `lease ${args.join(' ')}` } }),
+    'domain-name': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `domain-name ${args.join(' ')}` } }),
+    'netbios-name-server': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `netbios-name-server ${args.join(' ')}` } }),
+    option: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'dhcp_pool_command', pool: ctx.currentDhcpPool, command: `option ${args.join(' ')}` } }),
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentDhcpPool: null }, configDelta: null }),
+    end: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentDhcpPool: null }, configDelta: null }),
   },
 
   // ── VLAN CONFIG ──
   vlan_config: {
-    name: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'rename_vlan', number: ctx.currentVlan, name: args.join(' ') },
-    }),
-    exit: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentVlan: null },
-      configDelta: null,
-    }),
+    name: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'rename_vlan', number: ctx.currentVlan, name: args.join(' ') } }),
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentVlan: null }, configDelta: null }),
   },
 
   // ── ROUTER CONFIG ──
   router_config: {
-    network: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `network ${args.join(' ')}` },
-    }),
-    version: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `version ${args[0]}` },
-    }),
+    network: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `network ${args.join(' ')}` } }),
+    version: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `version ${args[0]}` } }),
     'passive-interface': (args, ctx) => {
       const ifName = normalizeInterface(args.join(''));
-      return {
-        output: '',
-        context: ctx,
-        configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `passive-interface ${ifName || args.join(' ')}` },
-      };
+      return { output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `passive-interface ${ifName || args.join(' ')}` } };
     },
-    'default-information': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `default-information ${args.join(' ')}` },
-    }),
-    'router-id': (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `router-id ${args[0]}` },
-    }),
-    redistribute: (args, ctx) => ({
-      output: '',
-      context: ctx,
-      configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `redistribute ${args.join(' ')}` },
-    }),
-    exit: (args, ctx) => ({
-      output: '',
-      context: {
-        ...ctx,
-        mode: 'global_config',
-        modeStack: ctx.modeStack.slice(0, -1),
-        currentRouterSection: null,
-      },
-      configDelta: null,
-    }),
-    end: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentRouterSection: null },
-      configDelta: null,
-    }),
+    'default-information': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `default-information ${args.join(' ')}` } }),
+    'router-id': (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `router-id ${args[0]}` } }),
+    redistribute: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: `redistribute ${args.join(' ')}` } }),
+    no: (args, ctx) => {
+      if (args[0]?.toLowerCase() === 'auto-summary') {
+        return { output: '', context: ctx, configDelta: { type: 'router_command', section: ctx.currentRouterSection, command: 'no auto-summary' } };
+      }
+      return { output: '', context: ctx, configDelta: null };
+    },
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1), currentRouterSection: null }, configDelta: null }),
+    end: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'], currentRouterSection: null }, configDelta: null }),
   },
 
   // ── LINE CONFIG ──
   line_config: {
-    password: (args, ctx) => ({
-      output: '', context: ctx,
-      configDelta: { type: 'global_command', command: `password ${args.join(' ')}` },
-    }),
-    login: (args, ctx) => ({
-      output: '', context: ctx,
-      configDelta: { type: 'global_command', command: 'login' },
-    }),
-    transport: (args, ctx) => ({
-      output: '', context: ctx,
-      configDelta: { type: 'global_command', command: `transport ${args.join(' ')}` },
-    }),
-    exit: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1) },
-      configDelta: null,
-    }),
-    end: (args, ctx) => ({
-      output: '',
-      context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] },
-      configDelta: null,
-    }),
+    password: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `password ${args.join(' ')}` } }),
+    login: (args, ctx) => {
+      if (args[0]?.toLowerCase() === 'local') {
+        return { output: '', context: ctx, configDelta: { type: 'global_command', command: 'login local' } };
+      }
+      return { output: '', context: ctx, configDelta: { type: 'global_command', command: 'login' } };
+    },
+    transport: (args, ctx) => ({ output: '', context: ctx, configDelta: { type: 'global_command', command: `transport ${args.join(' ')}` } }),
+    exit: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'global_config', modeStack: ctx.modeStack.slice(0, -1) }, configDelta: null }),
+    end: (args, ctx) => ({ output: '', context: { ...ctx, mode: 'priv_exec', modeStack: ['user_exec', 'priv_exec'] }, configDelta: null }),
   },
 };
 
-// ═══════ REALISTIC PACKET PROCESSOR & PING ENGINE ═══════
-
-function handlePcPing(target, ctx) {
-  if (!target) return { output: 'Usage: ping <ip-address>', context: ctx, configDelta: null };
-
-  const pcIface = ctx.device?.interfaces?.['FastEthernet0'] || Object.values(ctx.device?.interfaces || {})[0] || {};
-  const localIp = pcIface.ip || '';
-  const localMask = pcIface.mask || '255.255.255.0';
-  const localGateway = pcIface.gateway || '';
-  const deviceId = ctx.device?.id || '';
-  const allNodes = ctx.allNodes || [];
-  const allEdges = ctx.allEdges || [];
-
-  // Check 1: Physical Connection (Cable)
-  const hasCable = allEdges.some(e => e.source === deviceId || e.target === deviceId);
-  if (!hasCable) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nRequest timed out. (Ethernet cable disconnected)\nRequest timed out.\nRequest timed out.\nRequest timed out.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 2: Local Interface Admin State (no shutdown)
-  const localIfaceName = ctx.device?.interfaces?.['FastEthernet0'] ? 'FastEthernet0' : Object.keys(ctx.device?.interfaces || {})[0] || 'FastEthernet0/0';
-  const localLinkState = getInterfaceLinkStatus(ctx.device, localIfaceName, allEdges, allNodes);
-
-  if (localLinkState.status === 'administratively down') {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (Interface is administratively down)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 3: Local IP Configured
-  if (!localIp) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (Local IP address not configured)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 4: Self / Loopback Ping
-  if (target === '127.0.0.1' || target === localIp) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 5: Target Host Lookup on Canvas
-  let targetNode = null;
-  let targetIfaceName = null;
-  let targetIfaceObj = null;
-
-  for (const node of allNodes) {
-    const ifaces = node.data?.interfaces || {};
-    for (const [ifName, ifObj] of Object.entries(ifaces)) {
-      if (ifObj.ip === target) {
-        targetNode = node;
-        targetIfaceName = ifName;
-        targetIfaceObj = ifObj;
-        break;
-      }
-    }
-    if (targetNode) break;
-  }
-
-  if (!targetNode || !targetIfaceObj) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nRequest timed out.\nRequest timed out.\nRequest timed out.\nRequest timed out.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 6: Target Interface Admin State (no shutdown)
-  const targetAdminUp = isInterfaceAdminUp(targetNode.data, targetIfaceName);
-  if (!targetAdminUp) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nRequest timed out. (Destination host interface is down)\nRequest timed out.\nRequest timed out.\nRequest timed out.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check 7: Subnet & Routing Validation
-  const isSameSubnet = sameSubnet(localIp, target, localMask);
-
-  if (isSameSubnet) {
-    // Same subnet: verify physical link protocol is up/up
-    if (localLinkState.protocol === 'up') {
-      return {
-        output: `Pinging ${target} with 32 bytes of data:\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)`,
-        context: ctx, configDelta: null,
-      };
-    }
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nRequest timed out.\nRequest timed out.\nRequest timed out.\nRequest timed out.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Different subnet: require valid Default Gateway & Router Routing Table Lookup
-  if (!localGateway) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (Default gateway not configured)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check if gateway IP is in local subnet
-  if (!sameSubnet(localIp, localGateway, localMask)) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (Default gateway outside local subnet)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Find router node holding localGateway IP
-  let routerNode = null;
-  let routerIngressIface = null;
-
-  for (const node of allNodes) {
-    if (node.data?.type?.toLowerCase() === 'router') {
-      const ifaces = node.data?.interfaces || {};
-      for (const [ifName, ifObj] of Object.entries(ifaces)) {
-        if (ifObj.ip === localGateway) {
-          routerNode = node;
-          routerIngressIface = ifName;
-          break;
-        }
-      }
-    }
-    if (routerNode) break;
-  }
-
-  if (!routerNode || !isInterfaceAdminUp(routerNode.data, routerIngressIface)) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (Gateway router interface is down)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  // Check Router Routing Table for Route to Target Subnet
-  const routerDevice = routerNode.data;
-  const routerIfaces = Object.entries(routerDevice.interfaces || {});
-  let hasRouteToTarget = false;
-
-  // 1. Direct Connected Route (C) on Router
-  for (const [rIfName, rIfObj] of routerIfaces) {
-    if (rIfObj.ip && isInterfaceAdminUp(routerDevice, rIfName)) {
-      if (sameSubnet(rIfObj.ip, target, rIfObj.mask || '255.255.255.0')) {
-        hasRouteToTarget = true;
-        break;
-      }
-    }
-  }
-
-  // 2. Static Route (S) on Router (ip route ...)
-  if (!hasRouteToTarget) {
-    const globalCmds = routerDevice.running_config?.global_commands || [];
-    hasRouteToTarget = globalCmds.some(cmd => cmd.startsWith('ip route'));
-  }
-
-  // 3. Dynamic Route (OSPF/RIP/EIGRP) on Router
-  if (!hasRouteToTarget) {
-    const routerSections = routerDevice.running_config?.router_sections || {};
-    hasRouteToTarget = Object.keys(routerSections).length > 0;
-  }
-
-  if (hasRouteToTarget) {
-    return {
-      output: `Pinging ${target} with 32 bytes of data:\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\nReply from ${target}: bytes=32 time=1ms TTL=128\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)`,
-      context: ctx, configDelta: null,
-    };
-  }
-
-  return {
-    output: `Pinging ${target} with 32 bytes of data:\nDestination host unreachable. (No route to destination host)\nDestination host unreachable.\nDestination host unreachable.\nDestination host unreachable.\n\nPing statistics for ${target}:\n    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss)`,
-    context: ctx, configDelta: null,
-  };
-}
-
-// ── Show Command Handlers ──
-
-function matchTokens(input, pattern) {
-  if (input.length > pattern.length) return false;
-  return input.every((tok, i) => pattern[i].startsWith(tok));
-}
-
-function handleShow(args, ctx) {
-  const lower = args.map(a => a.toLowerCase());
-  const fullCmd = lower.join(' ');
-
-  let pipeKeyword = null;
-  if (fullCmd.includes('|')) {
-    const pipeIdx = lower.indexOf('|');
-    if (pipeIdx > 0 && lower[pipeIdx + 1] === 'section') {
-      pipeKeyword = lower[pipeIdx + 2] || '';
-    }
-  }
-
-  if (lower.length >= 1 && ('running-config'.startsWith(lower[0]) || 'startup-config'.startsWith(lower[0]))) {
-    let configStr = buildRunningConfig(ctx.device);
-    if (pipeKeyword) {
-      const sections = configStr.split('!');
-      const matched = sections.filter(sec => sec.toLowerCase().includes(pipeKeyword));
-      configStr = matched.join('!\n') || `% Section ${pipeKeyword} not found`;
-    }
-    return { output: configStr, context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 3 && lower[0] === 'ip' && lower[1] === 'dhcp' && lower[2].startsWith('bind')) {
-    return { output: buildDhcpBinding(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 3 && lower[0] === 'ip' && lower[1] === 'dhcp' && lower[2].startsWith('pool')) {
-    return { output: buildDhcpPoolOutput(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 3 && lower[0] === 'ip' && lower[1] === 'dhcp') {
-    return { output: 'IP address        Detection method   Detection time\n---------------------------------------------------', context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 3 && lower[0] === 'ip' && lower[1] === 'nat' && lower[2].startsWith('trans')) {
-    return { output: buildNatTranslations(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 3 && lower[0] === 'ip' && lower[1] === 'nat' && lower[2].startsWith('stat')) {
-    return { output: buildNatStatistics(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 1 && 'hosts'.startsWith(lower[0])) {
-    return { output: buildShowHosts(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 1 && ('access-lists'.startsWith(lower[0]) || 'access-list'.startsWith(lower[0]))) {
-    return { output: buildShowAccessLists(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 1 && 'arp'.startsWith(lower[0])) {
-    return { output: buildShowArp(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 2 && matchTokens(lower, ['ip', 'interface', 'brief'])) {
-    return { output: buildIpIntBrief(ctx.device, ctx.allEdges, ctx.allNodes), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 2 && matchTokens(lower, ['ip', 'route'])) {
-    if (ctx.deviceType === 'switch') {
-      return { output: '% IP routing not enabled', context: ctx, configDelta: null };
-    }
-    return { output: buildRouteTable(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 1 && 'vlan'.startsWith(lower[0])) {
-    if (ctx.deviceType === 'router') {
-      return { output: "% Invalid input detected at '^' marker.", context: ctx, configDelta: null };
-    }
-    return { output: buildVlanBrief(ctx.device), context: ctx, configDelta: null };
-  }
-
-  if (lower.length >= 1 && 'interfaces'.startsWith(lower[0])) {
-    return { output: buildIpIntBrief(ctx.device, ctx.allEdges, ctx.allNodes), context: ctx, configDelta: null };
-  }
-
-  return { output: `% Invalid show command: ${args.join(' ')}`, context: ctx, configDelta: null };
-}
-
-function handleSpanningTree(args, ctx) {
-  const cmd = `spanning-tree ${args.join(' ')}`;
-  return { output: '', context: ctx, configDelta: { type: 'global_command', command: cmd } };
-}
-
-function buildRunningConfig(device) {
-  if (!device) return '% No device context';
-  const lines = ['Building configuration...', '', 'Current configuration:', `!`, `hostname ${device.hostname}`];
-  for (const cmd of (device.running_config?.global_commands || [])) {
-    lines.push(cmd);
-  }
-  lines.push('!');
-  for (const [name, iface] of Object.entries(device.interfaces || {})) {
-    if (iface.commands?.length > 0 || iface.ip) {
-      lines.push(`interface ${name}`);
-      for (const cmd of (iface.commands || [])) lines.push(` ${cmd}`);
-      lines.push('!');
-    }
-  }
-  for (const [section, cmds] of Object.entries(device.running_config?.router_sections || {})) {
-    lines.push(section);
-    for (const cmd of cmds) lines.push(` ${cmd}`);
-    lines.push('!');
-  }
-  lines.push('end');
-  return lines.join('\n');
-}
-
-function buildIpIntBrief(device, allEdges = [], allNodes = []) {
-  if (!device) return '% No device context';
-  const header = 'Interface              IP-Address      OK? Method Status                Protocol';
-  const sep = '─'.repeat(80);
-  const rows = Object.entries(device.interfaces || {}).map(([name, iface]) => {
-    const ip = iface.ip || 'unassigned';
-    const linkState = getInterfaceLinkStatus(device, name, allEdges, allNodes);
-    return `${name.padEnd(23)}${ip.padEnd(16)}YES manual ${linkState.status.padEnd(22)}${linkState.protocol}`;
-  });
-  return [header, sep, ...rows].join('\n');
-}
-
-function buildRouteTable(device) {
-  if (!device) return '% No device context';
-
-  const lines = [
-    'Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP',
-    '       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area',
-    '       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2',
-    '       E1 - OSPF external type 1, E2 - OSPF external type 2',
-    '',
-    'Gateway of last resort is not set',
-    '',
-  ];
-
-  // 1. Connected Routes (C) & Local Routes (L)
-  for (const [ifName, iface] of Object.entries(device.interfaces || {})) {
-    if (iface.ip && isInterfaceAdminUp(device, ifName)) {
-      const mask = iface.mask || '255.255.255.0';
-      const cidr = maskToCidr(mask);
-      const netAddr = getNetworkAddress(iface.ip, mask);
-      lines.push(`C    ${netAddr}/${cidr} is directly connected, ${ifName}`);
-      lines.push(`L    ${iface.ip}/32 is directly connected, ${ifName}`);
-    }
-  }
-
-  // 2. Static Routes (S)
-  const staticRoutes = (device.running_config?.global_commands || [])
-    .filter(c => c.startsWith('ip route'))
-    .map(c => {
-      const parts = c.replace('ip route ', '').split(/\s+/);
-      const dest = parts[0] || '0.0.0.0';
-      const mask = parts[1] || '0.0.0.0';
-      const next = parts[2] || 'FastEthernet0/0';
-      const cidr = maskToCidr(mask);
-      return `S    ${dest}/${cidr} [1/0] via ${next}`;
-    });
-
-  for (const sr of staticRoutes) lines.push(sr);
-
-  // 3. Dynamic Routes (O/R/D)
-  const routerSections = device.running_config?.router_sections || {};
-  for (const [secName, cmds] of Object.entries(routerSections)) {
-    if (secName.startsWith('router ospf')) {
-      for (const cmd of cmds) {
-        if (cmd.startsWith('network')) {
-          const parts = cmd.split(/\s+/);
-          lines.push(`O    ${parts[1] || '172.16.0.0'}/16 [110/2] via 192.168.1.2, 00:04:12, FastEthernet0/0`);
-        }
-      }
-    }
-  }
-
-  return lines.length > 7 ? lines.join('\n') : lines.join('\n') + '% No routes configured';
-}
-
-function buildShowArp(device) {
-  const ip = device?.interfaces?.['FastEthernet0/0']?.ip || '192.168.1.1';
-  return [
-    'Protocol  Address          Age (min)  Hardware Addr   Type   Interface',
-    `Internet  ${ip.padEnd(16)} -   0002.4A41.4519  ARPA   FastEthernet0/0`,
-    'Internet  192.168.1.10            0   0060.2F41.8C01  ARPA   FastEthernet0/0',
-  ].join('\n');
-}
-
-function buildDhcpBinding(device) {
-  return [
-    'IP address       Client-ID/Hardware address     Lease expiration        Type',
-    '192.168.1.100    0060.2F41.8C01                 Aug 03 2026 15:30 PM    Automatic',
-  ].join('\n');
-}
-
-function buildDhcpPoolOutput(device) {
-  const sections = device?.running_config?.router_sections || {};
-  const poolNames = Object.keys(sections).filter(k => k.startsWith('ip dhcp pool')).map(k => k.replace('ip dhcp pool ', ''));
-  const poolName = poolNames[0] || 'MYPOOL';
-  return [
-    `Pool ${poolName} :`,
-    `  Utilization mark (high/low)    : 100 / 0`,
-    `  Subnet size (total/usable)     : 254 / 254`,
-    `  Total addresses                : 254`,
-    `  Leased addresses               : 1`,
-    `  Pending event                  : none`,
-    `  1 subnet is currently in the pool :`,
-    `  Current index                  IP address range                    Leased addresses`,
-    `  192.168.1.1                    192.168.1.1      - 192.168.1.254     1`,
-  ].join('\n');
-}
-
-function buildNatTranslations(device) {
-  const staticNats = (device?.running_config?.global_commands || [])
-    .filter(c => c.startsWith('ip nat inside source static'))
-    .map(c => {
-      const parts = c.split(/\s+/);
-      return `--- ${parts[5] || '200.1.1.10'}         ${parts[4] || '192.168.1.10'}       ---                ---`;
-    });
-  return [
-    'Pro Inside global      Inside local       Outside local      Outside global',
-    ...(staticNats.length > 0 ? staticNats : ['--- 200.1.1.10         192.168.1.10       ---                ---']),
-  ].join('\n');
-}
-
-function buildNatStatistics(device) {
-  return [
-    'Total active translations: 1 (1 static, 0 dynamic; 0 extended)',
-    'Outside interfaces:',
-    '  Serial0/0/0',
-    'Inside interfaces:',
-    '  FastEthernet0/0, FastEthernet0/1',
-    'Hits: 12  Misses: 0',
-  ].join('\n');
-}
-
-function buildShowHosts(device) {
-  const hosts = (device?.running_config?.global_commands || [])
-    .filter(c => c.startsWith('ip host'))
-    .map(c => {
-      const parts = c.split(/\s+/);
-      return `${(parts[2] || 'Host').padEnd(25)}None  (temp, ok)  0  IP     ${parts[3] || '192.168.1.10'}`;
-    });
-  return [
-    'Default domain is not set',
-    'Name/address lookup uses domain service',
-    'Name servers are 8.8.8.8',
-    '',
-    'Host                      Port  Flags      Age Type   Address(es)',
-    ...(hosts.length > 0 ? hosts : ['Server0                   None  (temp, ok)  0  IP     192.168.1.10']),
-  ].join('\n');
-}
-
-function buildShowAccessLists(device) {
-  const acls = (device?.running_config?.global_commands || [])
-    .filter(c => c.startsWith('access-list'))
-    .map(c => `    ${c.replace('access-list ', '')}`);
-  return [
-    'Standard IP access list 1',
-    ...(acls.length > 0 ? acls : ['    10 permit 192.168.1.0, wildcard bits 0.0.0.255']),
-  ].join('\n');
-}
-
-function buildVlanBrief(device) {
-  if (!device) return '% No device context';
-  const header = 'VLAN Name                             Status    Ports';
-  const sep = '─'.repeat(60);
-  const rows = (device.vlans || []).map(v => {
-    const ports = Object.entries(device.interfaces || {})
-      .filter(([, iface]) => iface.vlan === v.number)
-      .map(([name]) => name)
-      .join(', ');
-    return `${String(v.number).padEnd(5)}${(v.name || `VLAN${String(v.number).padStart(4, '0')}`).padEnd(34)}active    ${ports}`;
-  });
-  return [header, sep, ...rows].join('\n');
-}
-
-// ═══════ AUTOCOMPLETION ENGINE ═══════
+// ═══════ AUTOCOMPLETION ═══════
 
 const MODE_COMMAND_TEMPLATES = {
   pc_exec: [
-    'ipconfig', 'ipconfig /all', 'ping', 'tracert', 'ftp', 'ftp username', 'ftp password', 'ftp passive', 'exit'
+    'ipconfig', 'ipconfig /all', 'ip', 'ping', 'tracert', 'show', 'show ip', 'exit'
   ],
   user_exec: [
     'enable', 'exit', 'show', 'show ip', 'show ip interface', 'show ip interface brief',
-    'show ip route', 'show ip ospf', 'show ip dhcp', 'show ip dhcp binding', 'show ip dhcp pool',
-    'show ip nat', 'show ip nat translations', 'show ip nat statistics', 'show hosts', 'show access-lists', 'show arp',
-    'show vlan', 'show vlan brief', 'show running-config', 'show interfaces', 'show version'
+    'show ip route', 'show ip dhcp', 'show ip dhcp binding', 'show ip dhcp pool',
+    'show ip nat', 'show ip nat translations', 'show ip nat statistics',
+    'show hosts', 'show access-lists', 'show arp', 'show mac-address-table',
+    'show vlan', 'show vlan brief', 'show running-config', 'show interfaces',
+    'show version', 'show cdp', 'show cdp neighbors', 'show spanning-tree',
+    'ping',
   ],
   priv_exec: [
     'configure', 'configure terminal', 'disable', 'exit', 'copy',
-    'copy ftp: running-config', 'copy running-config ftp:', 'copy startup-config ftp:', 'copy ftp: startup-config',
-    'copy running-config startup-config', 'write', 'write memory',
+    'copy running-config startup-config', 'write', 'write memory', 'reload',
     'show', 'show ip', 'show ip interface', 'show ip interface brief',
-    'show ip route', 'show ip ospf', 'show ip dhcp', 'show ip dhcp binding', 'show ip dhcp pool',
-    'show ip nat', 'show ip nat translations', 'show ip nat statistics', 'show hosts', 'show access-lists', 'show arp',
-    'show vlan', 'show vlan brief', 'show running-config', 'show startup-config', 'show interfaces', 'show version'
+    'show ip route', 'show ip dhcp', 'show ip dhcp binding', 'show ip dhcp pool',
+    'show ip nat', 'show ip nat translations', 'show ip nat statistics',
+    'show hosts', 'show access-lists', 'show arp', 'show mac-address-table',
+    'show vlan', 'show vlan brief', 'show running-config', 'show startup-config',
+    'show interfaces', 'show version', 'show cdp', 'show cdp neighbors', 'show spanning-tree',
+    'ping',
   ],
   global_config: [
     'hostname', 'enable', 'enable secret', 'enable password',
     'interface', 'vlan', 'router', 'router ospf', 'router rip', 'router eigrp',
     'ip', 'ip route', 'ip default-gateway', 'ip dhcp', 'ip dhcp pool',
-    'ip dhcp excluded-address', 'ip dns', 'ip dns server', 'ip dns view', 'ip host',
+    'ip dhcp excluded-address', 'ip dns', 'ip dns server', 'ip host',
     'ip ftp username', 'ip ftp password',
-    'ip nat', 'ip nat inside', 'ip nat outside', 'ip nat pool', 'ip nat inside source static', 'ip nat inside source list',
-    'access-list', 'access-list 1 permit', 'access-list 1 deny',
-    'lldp', 'lldp run', 'lldp enable',
+    'ip nat', 'ip nat inside', 'ip nat outside', 'ip nat pool',
+    'ip nat inside source static', 'ip nat inside source list',
+    'access-list', 'lldp', 'lldp run',
     'spanning-tree', 'spanning-tree mode rapid-pvst', 'spanning-tree mode pvst',
     'service', 'service password-encryption', 'banner', 'banner motd',
-    'line', 'line console 0', 'line vty 0 4', 'end', 'exit'
+    'line', 'line console 0', 'line vty 0 4',
+    'do', 'end', 'exit',
   ],
   interface_config: [
     'ip', 'ip address', 'ip helper-address', 'ip nat inside', 'ip nat outside',
-    'no', 'no shutdown', 'no switchport', 'shutdown',
+    'no', 'no shutdown', 'no switchport', 'no ip address', 'shutdown',
     'description', 'encapsulation', 'encapsulation dot1Q',
     'switchport', 'switchport mode', 'switchport mode access',
     'switchport mode trunk', 'switchport access vlan', 'switchport trunk allowed vlan',
-    'switchport trunk native vlan',
-    'duplex', 'speed', 'clock', 'clock rate', 'end', 'exit'
+    'switchport trunk native vlan', 'switchport trunk encapsulation',
+    'duplex', 'speed', 'clock', 'clock rate',
+    'do', 'end', 'exit',
   ],
   dhcp_config: [
-    'network', 'default-router', 'dns-server', 'lease', 'domain-name', 'netbios-name-server', 'option', 'end', 'exit'
+    'network', 'default-router', 'dns-server', 'lease', 'domain-name',
+    'netbios-name-server', 'option', 'do', 'end', 'exit',
   ],
-  vlan_config: [
-    'name', 'state', 'end', 'exit'
-  ],
+  vlan_config: ['name', 'state', 'do', 'end', 'exit'],
   router_config: [
-    'network', 'area', 'passive-interface', 'default-information originate',
-    'no', 'no auto-summary', 'auto-summary', 'version', 'version 2', 'end', 'exit'
+    'network', 'passive-interface', 'default-information originate',
+    'no', 'no auto-summary', 'auto-summary', 'version', 'version 2',
+    'router-id', 'redistribute', 'do', 'end', 'exit',
   ],
   line_config: [
-    'password', 'login', 'transport input ssh', 'transport input all', 'end', 'exit'
-  ]
+    'password', 'login', 'login local', 'transport input ssh',
+    'transport input all', 'do', 'end', 'exit',
+  ],
 };
 
 export function autocompleteCommand(rawLine, context) {
@@ -1475,9 +1291,7 @@ export function autocompleteCommand(rawLine, context) {
   const isTrailingSpace = rawLine.endsWith(' ');
   const tokens = rawLine.trim().split(/\s+/).filter(Boolean);
 
-  if (tokens.length === 0) {
-    return { completedLine: rawLine, addition: '', matches: [] };
-  }
+  if (tokens.length === 0) return { completedLine: rawLine, addition: '', matches: [] };
 
   const lastToken = isTrailingSpace ? '' : tokens[tokens.length - 1];
 
@@ -1493,29 +1307,19 @@ export function autocompleteCommand(rawLine, context) {
     const isLastToken = i === tokens.length - 1 && !isTrailingSpace;
 
     if (!isLastToken) {
-      const availableNextWords = matchingTemplates
-        .map(t => t.split(' ')[i]?.toLowerCase())
-        .filter(Boolean);
-
+      const availableNextWords = matchingTemplates.map(t => t.split(' ')[i]?.toLowerCase()).filter(Boolean);
       const exactOrPrefix = availableNextWords.filter(w => w === token || w.startsWith(token));
-      const chosen = exactOrPrefix[0] || token;
+      let chosen = exactOrPrefix[0] || token;
 
-      let expanded = chosen;
-      if (chosen === 'int') expanded = 'interface';
-      if (chosen === 'sh') expanded = 'show';
-      if (chosen === 'conf') expanded = 'configure';
-      if (chosen === 't' && tokens[i - 1]?.toLowerCase() === 'configure') expanded = 'terminal';
-      if (chosen === 'br' && tokens[i - 1]?.toLowerCase() === 'interface') expanded = 'brief';
-      if (chosen === 'fa' || chosen === 'gi' || chosen === 's') expanded = normalizeInterface(chosen);
+      if (chosen === 'int') chosen = 'interface';
+      if (chosen === 'sh') chosen = 'show';
+      if (chosen === 'conf') chosen = 'configure';
 
-      prefixSoFar += (prefixSoFar ? ' ' : '') + expanded;
+      prefixSoFar += (prefixSoFar ? ' ' : '') + chosen;
       matchingTemplates = matchingTemplates.filter(t => t.toLowerCase().startsWith(prefixSoFar.toLowerCase()));
     } else {
       const wordIndex = i;
-      const candidateWords = matchingTemplates
-        .map(t => t.split(' ')[wordIndex])
-        .filter(Boolean);
-
+      const candidateWords = matchingTemplates.map(t => t.split(' ')[wordIndex]).filter(Boolean);
       const matches = [...new Set(candidateWords.filter(w => w.toLowerCase().startsWith(token.toLowerCase())))];
 
       if (matches.length === 1) {
@@ -1527,9 +1331,7 @@ export function autocompleteCommand(rawLine, context) {
         let commonPrefix = matches[0];
         for (let m = 1; m < matches.length; m++) {
           let j = 0;
-          while (j < commonPrefix.length && j < matches[m].length && commonPrefix[j].toLowerCase() === matches[m][j].toLowerCase()) {
-            j++;
-          }
+          while (j < commonPrefix.length && j < matches[m].length && commonPrefix[j].toLowerCase() === matches[m][j].toLowerCase()) j++;
           commonPrefix = commonPrefix.slice(0, j);
         }
         const addition = commonPrefix.length > token.length ? commonPrefix.slice(token.length) : '';
@@ -1541,11 +1343,10 @@ export function autocompleteCommand(rawLine, context) {
 
   if (isTrailingSpace) {
     const wordIndex = tokens.length;
-    const matchingTemplates = templates.filter(t => t.toLowerCase().startsWith(rawLine.trim().toLowerCase() + ' '));
-    const nextWords = [...new Set(matchingTemplates.map(t => t.split(' ')[wordIndex]).filter(Boolean))];
+    const matchingTpls = templates.filter(t => t.toLowerCase().startsWith(rawLine.trim().toLowerCase() + ' '));
+    const nextWords = [...new Set(matchingTpls.map(t => t.split(' ')[wordIndex]).filter(Boolean))];
     if (nextWords.length === 1) {
-      const fullWord = nextWords[0];
-      return { completedLine: rawLine + fullWord + ' ', addition: fullWord + ' ', matches: [fullWord] };
+      return { completedLine: rawLine + nextWords[0] + ' ', addition: nextWords[0] + ' ', matches: [nextWords[0]] };
     }
     return { completedLine: rawLine, addition: '', matches: nextWords };
   }

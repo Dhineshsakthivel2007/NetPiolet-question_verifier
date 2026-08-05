@@ -424,17 +424,7 @@ function CanvasInner() {
           border: '1px solid #E5E7EB',
           boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
         }} />
-        <MiniMap
-          nodeColor={(n) => {
-            const t = n.data?.type;
-            if (t === 'router') return '#7C5CFC';
-            if (t === 'switch') return '#10B981';
-            if (t === 'pc') return '#3B82F6';
-            return '#F59E0B';
-          }}
-          maskColor="rgba(124,92,252,0.08)"
-          style={{ background: 'white', borderRadius: 10, border: '1px solid #E5E7EB' }}
-        />
+        <CollapsibleMiniMap />
 
         {/* Live Cable Line attached to cursor (old edge unplugs completely!) */}
         {reconnectingCable && anchorNode && (
@@ -461,6 +451,70 @@ function CanvasInner() {
         onClose={useProjectStore.getState().cancelPortSelector}
       />
     </>
+  );
+}
+
+function CollapsibleMiniMap() {
+  const [isOpen, setIsOpen] = useState(true);
+
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 12,
+      right: 12,
+      zIndex: 1000,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-end',
+      pointerEvents: 'all',
+    }}>
+      {/* Toggle Button */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid #CBD5E1',
+          borderRadius: isOpen ? '8px 8px 0 0' : 8,
+          padding: '4px 10px',
+          fontSize: 11,
+          fontWeight: 700,
+          color: '#334155',
+          cursor: 'pointer',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          userSelect: 'none',
+          transition: 'all 0.2s ease',
+        }}
+        title={isOpen ? 'Shrink / Hide Canvas Minimap' : 'Open Canvas Minimap'}
+      >
+        <span>🗺️ Minimap</span>
+        <span style={{ fontSize: 10, color: '#7C5CFC', fontWeight: 800 }}>{isOpen ? '▼ Shrink' : '▲ Open'}</span>
+      </button>
+
+      {/* MiniMap Box */}
+      {isOpen && (
+        <MiniMap
+          nodeColor={(n) => {
+            const t = n.data?.type;
+            if (t === 'router') return '#7C5CFC';
+            if (t === 'switch') return '#10B981';
+            if (t === 'pc') return '#3B82F6';
+            return '#F59E0B';
+          }}
+          maskColor="rgba(124,92,252,0.08)"
+          style={{
+            position: 'relative',
+            margin: 0,
+            background: 'white',
+            borderRadius: '8px 0 8px 8px',
+            border: '1px solid #CBD5E1',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
+          }}
+        />
+      )}
+    </div>
   );
 }
 

@@ -26,17 +26,22 @@ function autoCableType(typeA, typeB) {
   return 'copper-straight';
 }
 
-function getDeviceAvailablePorts(node, edges = []) {
+function getDeviceAvailablePorts(node, edges = [], nodes = []) {
   if (!node) return [];
 
-  // Used ports on this node
+  const validNodeIds = new Set((nodes || []).map(n => n.id));
+
+  // Used ports on this node (only from valid edges between existing nodes)
   const used = new Set();
   for (const e of edges) {
-    if (e.source === node.id && e.data?.sourcePort) used.add(e.data.sourcePort);
-    if (e.target === node.id && e.data?.targetPort) used.add(e.data.targetPort);
+    if (!validNodeIds.has(e.source) || !validNodeIds.has(e.target)) continue;
+    const srcPort = e.data?.sourcePort || e.sourcePort;
+    const tgtPort = e.data?.targetPort || e.targetPort;
+    if (e.source === node.id && srcPort) used.add(srcPort);
+    if (e.target === node.id && tgtPort) used.add(tgtPort);
   }
 
-  const type = node.data?.type;
+  const type = node.data?.type || node.type;
   let allPorts = [];
 
   if (type === 'switch') {
@@ -153,11 +158,19 @@ const useProjectStore = create((set, get) => ({
 
   // React Flow callbacks
   onNodesChange: (changes) => {
-    set({ nodes: applyNodeChanges(changes, get().nodes) });
+    const currentNodes = get().nodes;
+    const nextNodes = applyNodeChanges(changes, currentNodes);
+    const validNodeIds = new Set(nextNodes.map(n => n.id));
+    const cleanEdges = get().edges.filter(e => e.source && e.target && validNodeIds.has(e.source) && validNodeIds.has(e.target));
+    set({ nodes: nextNodes, edges: cleanEdges });
     get()._autoSave();
   },
   onEdgesChange: (changes) => {
-    set({ edges: applyEdgeChanges(changes, get().edges) });
+    const currentEdges = get().edges;
+    const nextEdges = applyEdgeChanges(changes, currentEdges);
+    const validNodeIds = new Set(get().nodes.map(n => n.id));
+    const cleanEdges = nextEdges.filter(e => e.source && e.target && validNodeIds.has(e.source) && validNodeIds.has(e.target));
+    set({ edges: cleanEdges });
     get()._autoSave();
   },
   onConnect: (connection) => {
@@ -194,14 +207,17 @@ const useProjectStore = create((set, get) => ({
     const nodeIds = new Set(nodes.map(n => n.id));
     let updatedEdges = edges.filter(e => e.source && e.target && e.source !== e.target && nodeIds.has(e.source) && nodeIds.has(e.target));
 
-    if (isEndDevice(srcNode.data?.type)) {
+    const srcType = srcNode.data?.type || srcNode.type;
+    const tgtType = tgtNode.data?.type || tgtNode.type;
+
+    if (isEndDevice(srcType)) {
       updatedEdges = updatedEdges.filter(e => e.source !== srcNode.id && e.target !== srcNode.id);
     }
-    if (isEndDevice(tgtNode.data?.type)) {
+    if (isEndDevice(tgtType)) {
       updatedEdges = updatedEdges.filter(e => e.source !== tgtNode.id && e.target !== tgtNode.id);
     }
 
-    const cableType = autoCableType(srcNode.data?.type, tgtNode.data?.type);
+    const cableType = autoCableType(srcType, tgtType);
 
     get()._recordHistory();
 
@@ -255,7 +271,7 @@ const useProjectStore = create((set, get) => ({
     const node = nodes.find(n => n.id === deviceId);
     if (!node) return;
 
-    const availablePorts = getDeviceAvailablePorts(node, edges);
+    const availablePorts = getDeviceAvailablePorts(node, edges, nodes);
     set({
       portSelector: {
         deviceId,

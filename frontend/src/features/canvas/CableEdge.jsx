@@ -127,30 +127,28 @@ const CableEdge = memo(({
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   const px = -dy / len;
   const py = dx / len;
-  const labelOffset = 18;
+  
+  // Stagger label offset based on parallel edge index to prevent label collisions
+  const offsetIndex = totalParallel > 1 ? (edgeIndex - (totalParallel - 1) / 2) : 0;
+  const labelOffset = 16 + offsetIndex * 12;
 
-  const srcLabelX = sourceX + dx * 0.15 + px * labelOffset;
-  const srcLabelY = sy + dy * 0.15 + py * labelOffset;
-  const tgtLabelX = sourceX + dx * 0.85 + px * labelOffset;
-  const tgtLabelY = sy + dy * 0.85 + py * labelOffset;
-
-  // Cisco Link LED coordinates (right near the endpoints)
-  const srcLedX = sourceX + dx * 0.08;
-  const srcLedY = sourceY + dy * 0.08;
-  const tgtLedX = sourceX + dx * 0.92;
-  const tgtLedY = sourceY + dy * 0.92;
+  // Place port badges at 28% and 72% along the cable to clear node cylinder and labels!
+  const srcLabelX = sourceX + dx * 0.28 + px * labelOffset;
+  const srcLabelY = sy + dy * 0.28 + py * labelOffset;
+  const tgtLabelX = sourceX + dx * 0.72 + px * labelOffset;
+  const tgtLabelY = sy + dy * 0.72 + py * labelOffset;
 
   const portLabelStyle = {
     position: 'absolute',
     pointerEvents: 'none',
-    fontSize: 8, fontWeight: 700,
+    fontSize: 7.5, fontWeight: 700,
     fontFamily: '"JetBrains Mono", monospace',
-    color: '#374151',
-    background: 'rgba(255,255,255,0.95)',
-    padding: '1px 4px', borderRadius: 3,
-    border: '1px solid #D1D5DB',
+    color: '#1E293B',
+    background: 'rgba(255,255,255,0.94)',
+    padding: '1px 3.5px', borderRadius: 3,
+    border: '1px solid #CBD5E1',
     whiteSpace: 'nowrap',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
     lineHeight: 1.1,
     zIndex: 100,
   };
@@ -215,24 +213,24 @@ const CableEdge = memo(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: 'all',
-            fontSize: 8, fontWeight: 700,
+            fontSize: 7.5, fontWeight: 700,
             color: 'white',
             background: strokeColor,
-            padding: '2px 6px',
-            borderRadius: 8,
+            padding: '1.5px 5px',
+            borderRadius: 6,
             cursor: 'pointer',
-            boxShadow: `0 2px 6px ${strokeColor}55`,
+            boxShadow: `0 2px 5px ${strokeColor}55`,
             userSelect: 'none',
-            display: 'flex', alignItems: 'center', gap: 3,
+            display: 'flex', alignItems: 'center', gap: 2.5,
             whiteSpace: 'nowrap',
             transition: 'background 0.3s ease',
             zIndex: 101,
           }}
           title={linkEval.reason}
         >
-          <span style={{ fontSize: 7 }}>{linkEval.isUp ? '🟢' : linkEval.status === 'mismatch' ? '⚠️' : '🔴'}</span>
+          <span style={{ fontSize: 6.5 }}>{linkEval.isUp ? '🟢' : linkEval.status === 'mismatch' ? '⚠️' : '🔴'}</span>
           <span>{cs.shortLabel}</span>
-          <span style={{ fontSize: 6, opacity: 0.8 }}>▼</span>
+          <span style={{ fontSize: 5.5, opacity: 0.8 }}>▼</span>
         </div>
       </EdgeLabelRenderer>
     </>

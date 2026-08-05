@@ -44,9 +44,43 @@ export default function LabPage() {
   const openTerminals = useProjectStore(s => s.openTerminals);
   const closeTerminal = useProjectStore(s => s.closeTerminal);
   const questionTitle = useProjectStore(s => s.questionTitle);
+  const questionText = useProjectStore(s => s.questionText);
   const questionId = useProjectStore(s => s.questionId);
   const questionTimeLimit = useProjectStore(s => s.questionTimeLimit);
   const nodes = useProjectStore(s => s.nodes);
+
+  // Question Expansion & Drag State (From existing question title in header)
+  const [expandQuestion, setExpandQuestion] = useState(false);
+  const [questionFullscreen, setQuestionFullscreen] = useState(false);
+  const [questionPos, setQuestionPos] = useState({ x: 80, y: 30 });
+  const [isDraggingQuestion, setIsDraggingQuestion] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const handleQuestionMouseDown = (e) => {
+    if (questionFullscreen) return;
+    setIsDraggingQuestion(true);
+    setDragStart({ x: e.clientX - questionPos.x, y: e.clientY - questionPos.y });
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDraggingQuestion) return;
+      setQuestionPos({
+        x: Math.max(10, Math.min(window.innerWidth - 320, e.clientX - dragStart.x)),
+        y: Math.max(10, Math.min(window.innerHeight - 200, e.clientY - dragStart.y)),
+      });
+    };
+    const handleMouseUp = () => setIsDraggingQuestion(false);
+
+    if (isDraggingQuestion) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingQuestion, dragStart]);
 
   useEffect(() => {
     if (projectId) loadProject(projectId);
@@ -401,8 +435,32 @@ export default function LabPage() {
             ⟳
           </button>
           <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg, #7C5CFC, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 800 }}>PG</div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#1F2937' }}>{questionTitle || 'Lab Environment'}</div>
+          <div
+            onClick={() => setExpandQuestion(!expandQuestion)}
+            style={{
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: '2px 8px',
+              borderRadius: 6,
+              background: expandQuestion ? '#F3E8FF' : 'transparent',
+              transition: 'background 0.2s ease',
+            }}
+            title="Click to Expand Question & Lab Instructions (Draggable Window)"
+          >
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#1F2937', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>{questionTitle || 'Lab Environment'}</span>
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: expandQuestion ? 'white' : '#7C5CFC',
+                background: expandQuestion ? '#7C5CFC' : '#F3E8FF',
+                border: '1px solid #C084FC',
+                padding: '1px 6px', borderRadius: 4,
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}>
+                {expandQuestion ? '▲ Collapse' : '⤢ Expand Question'}
+              </span>
+            </div>
             <div style={{ fontSize: 11, color: '#9CA3AF' }}>{nodes.length} devices</div>
           </div>
         </div>
@@ -786,9 +844,113 @@ export default function LabPage() {
         <ReactFlowProvider>
           <DevicePalette />
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
             {/* Canvas */}
             <div style={{ flex: 1, position: 'relative' }}>
               <CanvasEngine />
+
+              {/* Draggable & Resizable Question Instructions Window */}
+              {expandQuestion && (
+                <div
+                  style={{
+                    position: questionFullscreen ? 'fixed' : 'absolute',
+                    inset: questionFullscreen ? 0 : undefined,
+                    top: questionFullscreen ? 0 : questionPos.y,
+                    left: questionFullscreen ? 0 : questionPos.x,
+                    width: questionFullscreen ? '100vw' : 520,
+                    height: questionFullscreen ? '100vh' : 340,
+                    zIndex: questionFullscreen ? 3000 : 900,
+                    background: '#FFFFFF',
+                    borderRadius: questionFullscreen ? 0 : 12,
+                    boxShadow: questionFullscreen ? 'none' : '0 16px 48px rgba(0,0,0,0.25), 0 0 0 1.5px rgba(124,92,252,0.4)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    resize: questionFullscreen ? 'none' : 'both',
+                    minWidth: 320,
+                    minHeight: 180,
+                  }}
+                >
+                  {/* Draggable Header */}
+                  <div
+                    onMouseDown={handleQuestionMouseDown}
+                    style={{
+                      height: 40,
+                      background: 'linear-gradient(135deg, #7C5CFC, #6366F1)',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0 14px',
+                      cursor: questionFullscreen ? 'default' : 'grab',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, fontSize: 13 }}>
+                      <span>📋</span>
+                      <span>{questionTitle || 'Question Instructions'}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={() => setQuestionFullscreen(!questionFullscreen)}
+                        style={{
+                          background: 'rgba(255,255,255,0.2)',
+                          border: 'none',
+                          color: 'white',
+                          borderRadius: 5,
+                          padding: '3px 8px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                        title={questionFullscreen ? 'Restore Window Size' : 'Expand to Fullscreen'}
+                      >
+                        {questionFullscreen ? '🗗 Restore' : '⛶ Fullscreen'}
+                      </button>
+                      <button
+                        onClick={() => { setExpandQuestion(false); setQuestionFullscreen(false); }}
+                        style={{
+                          background: 'rgba(255,255,255,0.2)',
+                          border: 'none',
+                          color: 'white',
+                          borderRadius: 5,
+                          width: 22,
+                          height: 22,
+                          fontSize: 12,
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        title="Close Question Window"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Body Content */}
+                  <div
+                    style={{
+                      flex: 1,
+                      padding: '16px 20px',
+                      overflowY: 'auto',
+                      fontSize: 13.5,
+                      lineHeight: 1.65,
+                      color: '#334155',
+                      background: '#F8FAFC',
+                      whiteSpace: 'pre-wrap',
+                      fontFamily: 'system-ui, -apple-system, sans-serif',
+                    }}
+                  >
+                    <h3 style={{ margin: '0 0 10px 0', fontSize: 16, fontWeight: 800, color: '#1E293B' }}>
+                      {questionTitle || 'Assessment Question'}
+                    </h3>
+                    <div>{questionText || 'No detailed instructions provided for this lab.'}</div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* CLI Terminals */}

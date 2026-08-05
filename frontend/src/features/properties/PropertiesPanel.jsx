@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import useProjectStore from '../../store/projectStore.js';
 import { getDeviceDef } from '../devices/DeviceRegistry.js';
 
@@ -15,6 +15,40 @@ export default function PropertiesPanel() {
 
   const [expandedIface, setExpandedIface] = useState(null);
 
+  // Question Panel Resizable & Expandable State
+  const [questionPanelWidth, setQuestionPanelWidth] = useState(340);
+  const [isQuestionExpanded, setIsQuestionExpanded] = useState(false);
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const resizeStartXRef = useRef(0);
+  const startWidthRef = useRef(340);
+
+  const handlePanelResizeMouseDown = (e) => {
+    e.preventDefault();
+    setIsResizingPanel(true);
+    resizeStartXRef.current = e.clientX;
+    startWidthRef.current = questionPanelWidth;
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizingPanel) return;
+      const deltaX = resizeStartXRef.current - e.clientX;
+      const newWidth = Math.max(280, Math.min(850, startWidthRef.current + deltaX));
+      setQuestionPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => setIsResizingPanel(false);
+
+    if (isResizingPanel) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingPanel]);
+
   const node = nodes.find(n => n.id === selectedDevice);
   const device = node?.data;
 
@@ -27,18 +61,99 @@ export default function PropertiesPanel() {
   };
 
   if (!device) {
+    const currentWidth = isQuestionExpanded ? 640 : questionPanelWidth;
+
     // Show question panel when no device is selected
     return (
-      <div style={{ width: 300, background: 'white', borderLeft: '1px solid #E5E7EB', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '14px 14px 8px', borderBottom: '1px solid #E5E7EB' }}>
-          <h3 style={{ fontSize: 13, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>📖 Question</h3>
+      <div style={{
+        width: currentWidth,
+        height: '100%',
+        maxHeight: '100vh',
+        background: 'white',
+        borderLeft: '1px solid #E5E7EB',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        transition: isResizingPanel ? 'none' : 'width 0.2s ease',
+      }}>
+        {/* Draggable Left Border Resize Handle */}
+        <div
+          onMouseDown={handlePanelResizeMouseDown}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 6,
+            cursor: 'ew-resize',
+            zIndex: 20,
+            background: isResizingPanel ? '#7C5CFC' : 'transparent',
+            transition: 'background 0.15s ease',
+          }}
+          title="Click & Drag left/right to resize question panel"
+        />
+
+        {/* Panel Header */}
+        <div style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #E5E7EB',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          background: '#F9FAFB',
+          userSelect: 'none',
+          flexShrink: 0,
+        }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: '#4B5563', textTransform: 'uppercase', letterSpacing: 1, margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>📖</span>
+            <span>Question</span>
+          </h3>
+
+          <button
+            onClick={() => setIsQuestionExpanded(!isQuestionExpanded)}
+            style={{
+              background: isQuestionExpanded ? '#7C5CFC' : '#F3E8FF',
+              color: isQuestionExpanded ? 'white' : '#7C5CFC',
+              border: '1px solid #C084FC',
+              padding: '4px 12px',
+              borderRadius: 6,
+              fontSize: 11,
+              fontWeight: 800,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              transition: 'all 0.2s ease',
+            }}
+            title={isQuestionExpanded ? 'Shrink Question Panel Width' : 'Expand Question Panel Width'}
+          >
+            {isQuestionExpanded ? '🗗 Shrink' : '⤢ Expand Question'}
+          </button>
         </div>
-        <div style={{ padding: 14, flex: 1 }}>
-          {questionTitle && <h4 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>{questionTitle}</h4>}
+
+        {/* Panel Content (Scrollable Container) */}
+        <div style={{
+          padding: 16,
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}>
+          {questionTitle && (
+            <h4 style={{ fontSize: 15, fontWeight: 800, color: '#1E293B', margin: 0, lineHeight: 1.4 }}>
+              {questionTitle}
+            </h4>
+          )}
           <div style={{
-            fontSize: 13, lineHeight: 1.8, color: '#374151',
-            whiteSpace: 'pre-wrap', padding: 12, background: '#F9FAFB',
-            borderRadius: 10, border: '1px solid #F0F1F6',
+            fontSize: 13, lineHeight: 1.8, color: '#334155',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            padding: 14, background: '#F8FAFC',
+            borderRadius: 10, border: '1px solid #E2E8F0',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
           }}>
             {questionText || 'Select a device on the canvas to edit its properties, connect cables, or open its terminal.'}
           </div>

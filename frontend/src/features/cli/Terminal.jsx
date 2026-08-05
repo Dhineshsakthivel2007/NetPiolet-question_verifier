@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { createCliContext, interpret, getPrompt, autocompleteCommand } from './CommandParser.js';
+import IosDevice from './IosDevice.js';
 import useProjectStore from '../../store/projectStore.js';
 
 export default function CliTerminal({ deviceId }) {
@@ -32,22 +33,60 @@ export default function CliTerminal({ deviceId }) {
         break;
 
       case 'global_command': {
-        const gc = [...(device.running_config?.global_commands || [])];
-        if (!gc.includes(delta.command)) gc.push(delta.command);
+        let gc = [...(device.running_config?.global_commands || [])];
+        const newCmd = delta.command.trim();
+        const lowerNew = newCmd.toLowerCase();
+
+        if (lowerNew.startsWith('enable secret ')) {
+          gc = gc.filter(c => !c.toLowerCase().startsWith('enable secret '));
+        } else if (lowerNew.startsWith('enable password ')) {
+          gc = gc.filter(c => !c.toLowerCase().startsWith('enable password '));
+        } else if (lowerNew.startsWith('ip default-gateway ')) {
+          gc = gc.filter(c => !c.toLowerCase().startsWith('ip default-gateway '));
+        } else if (lowerNew.startsWith('banner motd ')) {
+          gc = gc.filter(c => !c.toLowerCase().startsWith('banner motd '));
+        }
+
+        if (!gc.includes(newCmd)) gc.push(newCmd);
         updateRunningConfig(deviceId, { global_commands: gc });
         break;
       }
 
       case 'interface_command': {
         const iface = device.interfaces?.[delta.interface] || {};
-        const cmds = [...(iface.commands || [])];
-        if (delta.removeCommand) {
-          const idx = cmds.indexOf(delta.removeCommand);
-          if (idx >= 0) cmds.splice(idx, 1);
+        let cmds = [...(iface.commands || [])];
+
+        if (delta.addCommand) {
+          const newCmd = delta.addCommand.trim();
+          const lowerNew = newCmd.toLowerCase();
+
+          if (lowerNew.startsWith('ip address ')) {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('ip address '));
+          } else if (lowerNew === 'no ip address') {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('ip address ') && !c.toLowerCase().startsWith('no ip address'));
+          } else if (lowerNew.startsWith('description ')) {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('description '));
+          } else if (lowerNew.startsWith('switchport mode ')) {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('switchport mode '));
+          } else if (lowerNew.startsWith('switchport access vlan ')) {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('switchport access vlan '));
+          } else if (lowerNew.startsWith('clock rate ')) {
+            cmds = cmds.filter(c => !c.toLowerCase().startsWith('clock rate '));
+          } else if (lowerNew === 'no shutdown') {
+            cmds = cmds.filter(c => c.toLowerCase() !== 'shutdown');
+          } else if (lowerNew === 'shutdown') {
+            cmds = cmds.filter(c => c.toLowerCase() !== 'no shutdown');
+          }
+
+          if (delta.removeCommand) {
+            cmds = cmds.filter(c => c.toLowerCase() !== delta.removeCommand.toLowerCase());
+          }
+
+          if (lowerNew !== 'no ip address' && !cmds.includes(newCmd)) {
+            cmds.push(newCmd);
+          }
         }
-        if (delta.addCommand && !cmds.includes(delta.addCommand)) {
-          cmds.push(delta.addCommand);
-        }
+
         updateInterface(deviceId, delta.interface, {
           ...iface,
           ...(delta.updates || {}),
@@ -110,6 +149,20 @@ export default function CliTerminal({ deviceId }) {
         updateRunningConfig(deviceId, { router_sections: rs });
         break;
       }
+
+      case 'remove_global_command': {
+        const gc = [...(device.running_config?.global_commands || [])];
+        const filtered = gc.filter(c => !c.startsWith(delta.prefix));
+        updateRunningConfig(deviceId, { global_commands: filtered });
+        break;
+      }
+
+      case 'restore_startup': {
+        if (delta.startupConfig) {
+          updateRunningConfig(deviceId, delta.startupConfig);
+        }
+        break;
+      }
     }
   }, [deviceId, getDevice, updateDeviceConfig, updateDeviceHostname, updateInterface, addVlan, updateRunningConfig]);
 
@@ -134,7 +187,9 @@ export default function CliTerminal({ deviceId }) {
         cyan: '#94E2D5',
         white: '#BAC2DE',
       },
-      scrollback: 5000,
+      scrollback: 10000,
+      scrollSensitivity: 2,
+      fastScrollSensitivity: 5,
       convertEol: true,
     });
 
@@ -152,6 +207,14 @@ export default function CliTerminal({ deviceId }) {
     // Init CLI context
     const device = getDevice(deviceId);
     ctxRef.current = createCliContext(device);
+
+    // Create IosDevice runtime state engine
+    const allNodes = useProjectStore.getState().nodes;
+    const allEdges = useProjectStore.getState().edges;
+    const deviceDataForIos = { id: deviceId, ...device };
+    ctxRef.current.iosDevice = new IosDevice(deviceDataForIos, allNodes.map(n => ({ id: n.id, ...n.data })), allEdges);
+    ctxRef.current.allNodes = allNodes;
+    ctxRef.current.allEdges = allEdges;
 
     // Welcome message
     xterm.writeln('\x1b[36m╔══════════════════════════════════════════╗\x1b[0m');
@@ -189,10 +252,28 @@ export default function CliTerminal({ deviceId }) {
 
       // Get fresh device and canvas topology data
       const freshDevice = getDevice(deviceId);
+      const freshNodes = useProjectStore.getState().nodes;
+      const freshEdges = useProjectStore.getState().edges;
       if (ctxRef.current) {
         ctxRef.current.device = freshDevice;
-        ctxRef.current.allNodes = useProjectStore.getState().nodes;
-        ctxRef.current.allEdges = useProjectStore.getState().edges;
+        ctxRef.current.allNodes = freshNodes;
+        ctxRef.current.allEdges = freshEdges;
+
+        // Refresh IosDevice runtime state from latest topology
+        const deviceDataForIos = { id: deviceId, ...freshDevice };
+        if (ctxRef.current.iosDevice) {
+          ctxRef.current.iosDevice.refresh(
+            deviceDataForIos,
+            freshNodes.map(n => ({ id: n.id, ...n.data })),
+            freshEdges
+          );
+        } else {
+          ctxRef.current.iosDevice = new IosDevice(
+            deviceDataForIos,
+            freshNodes.map(n => ({ id: n.id, ...n.data })),
+            freshEdges
+          );
+        }
       }
 
       const result = interpret(line, ctxRef.current);
@@ -367,9 +448,9 @@ export default function CliTerminal({ deviceId }) {
       style={{
         height: '100%',
         width: '100%',
-        minHeight: 200,
         borderRadius: 8,
-        overflow: 'auto',
+        overflow: 'hidden',
+        position: 'relative',
       }}
     />
   );
