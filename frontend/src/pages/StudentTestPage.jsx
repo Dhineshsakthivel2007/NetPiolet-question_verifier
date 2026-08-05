@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
 
+
 const EXAM_RULES = [
   "I will not use any unauthorized materials or resources during this test.",
   "I will not communicate with other students during the examination.",
@@ -195,10 +196,10 @@ export default function StudentTestPage() {
       <div style={{ maxWidth: 520, margin: '50px auto', animation: 'fadeIn 0.4s ease' }}>
         <div className="card" style={{ textAlign: 'center', padding: '36px 32px' }}>
           {feedbackDone ? (
-            <><div style={{ fontSize: 64, marginBottom: 14 }}>🎉</div><h2 style={{ fontSize: 24 }}>Thank You!</h2><p style={{ color: 'var(--text-secondary)', fontSize: 15 }}>Feedback submitted.</p></>
+            <><div style={{ fontSize: 64, marginBottom: 14 }}>🏆</div><h2 style={{ fontSize: 24 }}>Thank You!</h2><p style={{ color: 'var(--text-secondary)', fontSize: 15 }}>Feedback submitted.</p></>
           ) : (
             <>
-              <div style={{ fontSize: 44, marginBottom: 8 }}>📝</div>
+              <div style={{ fontSize: 44, marginBottom: 8 }}>🗨️</div>
               <h2 style={{ fontSize: 22, marginBottom: 20 }}>Test Feedback</h2>
               <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8 }}>How was the test?</p>
               <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 24 }}>

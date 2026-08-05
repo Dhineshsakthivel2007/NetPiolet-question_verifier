@@ -236,7 +236,7 @@ a:hover { color: var(--accent-dark); }
 .btn-icon { padding: 8px; border-radius: var(--radius-md); min-width: 34px; justify-content: center; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
 
-/* Google Button */
+/* Custom Google Button */
 .btn-google {
   background: white; color: #333; border: 1px solid var(--border);
   font-weight: 600; gap: 10px; width: 100%;
@@ -244,6 +244,166 @@ a:hover { color: var(--accent-dark); }
 }
 .btn-google:hover { background: var(--bg-tertiary); box-shadow: var(--shadow-sm); }
 .btn-google img, .btn-google svg { width: 20px; height: 20px; }
+
+.btn-google-custom {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 14px;
+  color: #1E293B;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-google-custom:hover {
+  background: #FFFFFF;
+  border-color: #6366F1;
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.18), 0 2px 8px rgba(0, 0, 0, 0.04);
+  transform: translateY(-2px);
+}
+
+.btn-google-custom:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.12);
+}
+
+.google-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #F8FAFC;
+  transition: background 0.2s ease;
+}
+
+.btn-google-custom:hover .google-icon-wrapper {
+  background: #EEF2FF;
+}
+
+.google-btn-text {
+  font-weight: 700;
+  color: #0F172A;
+  letter-spacing: -0.2px;
+}
+
+.google-domain-tag {
+  background: #EFF6FF;
+  color: #2563EB;
+  border: 1px solid #BFDBFE;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  transition: all 0.2s ease;
+}
+
+.btn-google-custom:hover .google-domain-tag {
+  background: #4F46E5;
+  color: #FFFFFF;
+  border-color: #4F46E5;
+}
+
+/* ─── Owl Shaped Google Box ─── */
+.owl-card-wrapper {
+  position: relative;
+  width: 100%;
+  margin-top: 18px;
+}
+
+.owl-ear {
+  position: absolute;
+  top: -10px;
+  width: 24px;
+  height: 20px;
+  background: #7C5CFC;
+  border-radius: 14px 14px 0 0;
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 1;
+  box-shadow: 0 -2px 6px rgba(124, 92, 252, 0.2);
+}
+
+.owl-ear-left {
+  left: 32px;
+  transform: rotate(-14deg);
+}
+
+.owl-ear-right {
+  right: 32px;
+  transform: rotate(14deg);
+}
+
+.owl-card-wrapper:hover .owl-ear-left {
+  transform: rotate(-24deg) translateY(-3px) scale(1.1);
+  background: #6366F1;
+}
+
+.owl-card-wrapper:hover .owl-ear-right {
+  transform: rotate(24deg) translateY(-3px) scale(1.1);
+  background: #6366F1;
+}
+
+.owl-google-box {
+  position: relative;
+  z-index: 2;
+  border-radius: 26px 26px 18px 18px !important;
+  padding: 13px 20px !important;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%) !important;
+  border: 2px solid #E0E7FF !important;
+  box-shadow: 0 8px 24px rgba(124, 92, 252, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.owl-google-box:hover {
+  border-color: #7C5CFC !important;
+  box-shadow: 0 14px 34px rgba(124, 92, 252, 0.25), 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+  background: #FFFFFF !important;
+  transform: translateY(-3px) !important;
+}
+
+.owl-eye-wrapper {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 50% !important;
+  background: #EEF2FF !important;
+  border: 2px solid #C7D2FE !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  flex-shrink: 0;
+}
+
+.owl-text-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1;
+  margin-left: 12px;
+}
+
+.owl-beak-icon {
+  font-size: 20px;
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.15));
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  flex-shrink: 0;
+}
+
+.owl-card-wrapper:hover .owl-beak-icon {
+  transform: scale(1.3) rotate(12deg);
+}
 
 /* ============================================ Forms */
 .form-group { margin-bottom: 18px; }

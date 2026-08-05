@@ -51,18 +51,23 @@ def check_ospf_process(network: ParsedNetwork, **params) -> ValidatorResult:
 )
 def check_ospf_network(network: ParsedNetwork, **params) -> ValidatorResult:
     device_name = params.get("device", "")
-    net = params.get("_network_addr", "")
+    net = params.get("network") or params.get("network_address") or params.get("_network_addr") or ""
     wildcard = params.get("wildcard", "")
     area = int(params.get("area", 0))
     device, sections, err = _get_ospf_section(network, device_name)
     if err:
         return ValidatorResult(passed=False, message=err, score=0.0)
-    expected = f"network {net} {wildcard} area {area}"
+
+    # Build match patterns
+    expected_full = f"network {net} {wildcard} area {area}".strip() if wildcard else f"network {net}"
     for section in (sections or []):
         for line in section:
-            if expected.lower() in line.lower():
-                return ValidatorResult(passed=True, message=f"OSPF network statement found: {expected}", score=1.0)
-    return ValidatorResult(passed=False, message=f"OSPF network statement not found: {expected}", score=0.0, details={"expected": expected})
+            clean_line = " ".join(line.lower().split())
+            if net in clean_line and f"area {area}" in clean_line:
+                return ValidatorResult(passed=True, message=f"OSPF network statement found for {net} area {area}", score=1.0)
+            if expected_full.lower() in clean_line:
+                return ValidatorResult(passed=True, message=f"OSPF network statement found: {expected_full}", score=1.0)
+    return ValidatorResult(passed=False, message=f"OSPF network statement for {net} not found on {device_name}", score=0.0, details={"expected": expected_full})
 
 
 @register_validator(

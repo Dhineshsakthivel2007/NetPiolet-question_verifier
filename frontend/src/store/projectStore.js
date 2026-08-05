@@ -26,7 +26,41 @@ function autoCableType(typeA, typeB) {
   return 'copper-straight';
 }
 
-export { autoCableType };
+function getDeviceAvailablePorts(node, edges = []) {
+  if (!node) return [];
+
+  // Used ports on this node
+  const used = new Set();
+  for (const e of edges) {
+    if (e.source === node.id && e.data?.sourcePort) used.add(e.data.sourcePort);
+    if (e.target === node.id && e.data?.targetPort) used.add(e.data.targetPort);
+  }
+
+  const type = node.data?.type;
+  let allPorts = [];
+
+  if (type === 'switch') {
+    allPorts.push({ name: 'Console', type: 'console' });
+    for (let i = 1; i <= 24; i++) {
+      allPorts.push({ name: `FastEthernet0/${i}`, type: 'fast' });
+    }
+    allPorts.push({ name: 'GigabitEthernet0/1', type: 'giga' });
+    allPorts.push({ name: 'GigabitEthernet0/2', type: 'giga' });
+  } else if (type === 'router') {
+    allPorts.push({ name: 'GigabitEthernet0/0', type: 'giga' });
+    allPorts.push({ name: 'GigabitEthernet0/1', type: 'giga' });
+    allPorts.push({ name: 'GigabitEthernet0/2', type: 'giga' });
+    allPorts.push({ name: 'GigabitEthernet0/3', type: 'giga' });
+  } else if (type === 'pc' || type === 'server') {
+    allPorts.push({ name: 'FastEthernet0', type: 'fast' });
+  } else {
+    allPorts.push({ name: 'FastEthernet0/1', type: 'fast' });
+  }
+
+  return allPorts.filter(p => !used.has(p.name));
+}
+
+export { autoCableType, getDeviceAvailablePorts };
 
 let saveTimer = null;
 
@@ -46,6 +80,77 @@ const useProjectStore = create((set, get) => ({
   submitResult: null,
   submitting: false,
 
+  // History Stack for Undo / Redo
+  historyPast: [],
+  historyFuture: [],
+
+  _recordHistory: () => {
+    const { nodes, edges, historyPast } = get();
+    const snapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    };
+    const newPast = [...historyPast, snapshot];
+    if (newPast.length > 30) newPast.shift();
+    set({ historyPast: newPast, historyFuture: [] });
+  },
+
+  undo: () => {
+    const { cableToolSourceId, cableToolActive, reconnectingCable, historyPast, historyFuture, nodes, edges } = get();
+
+    if (cableToolSourceId) {
+      set({ cableToolSourceId: null });
+      return;
+    }
+
+    if (cableToolActive) {
+      set({ cableToolActive: false });
+      return;
+    }
+
+    if (reconnectingCable) {
+      get().cancelReconnectingCable();
+      return;
+    }
+
+    if (!historyPast || historyPast.length === 0) return;
+
+    const previousSnapshot = historyPast[historyPast.length - 1];
+    const newPast = historyPast.slice(0, -1);
+    const currentSnapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    };
+
+    set({
+      nodes: previousSnapshot.nodes,
+      edges: previousSnapshot.edges,
+      historyPast: newPast,
+      historyFuture: [currentSnapshot, ...historyFuture],
+    });
+    get()._autoSave();
+  },
+
+  redo: () => {
+    const { historyPast, historyFuture, nodes, edges } = get();
+    if (!historyFuture || historyFuture.length === 0) return;
+
+    const nextSnapshot = historyFuture[0];
+    const newFuture = historyFuture.slice(1);
+    const currentSnapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    };
+
+    set({
+      nodes: nextSnapshot.nodes,
+      edges: nextSnapshot.edges,
+      historyPast: [...historyPast, currentSnapshot],
+      historyFuture: newFuture,
+    });
+    get()._autoSave();
+  },
+
   // React Flow callbacks
   onNodesChange: (changes) => {
     set({ nodes: applyNodeChanges(changes, get().nodes) });
@@ -56,18 +161,39 @@ const useProjectStore = create((set, get) => ({
     get()._autoSave();
   },
   onConnect: (connection) => {
-    const { nodes, edges } = get();
+    const { nodes, edges, cableToolActive, openPortSelector } = get();
 
-    // Find devices
+    if (!cableToolActive) {
+      alert("⚡ Cable connection mode is inactive! Please click 'Auto Cable Wire' in the sidebar palette under CONNECTIONS to enable cabling.");
+      return;
+    }
+
     const srcNode = nodes.find(n => n.id === connection.source);
     const tgtNode = nodes.find(n => n.id === connection.target);
     if (!srcNode || !tgtNode) return;
     if (connection.source === connection.target) return;
 
+    // If sourcePort and targetPort are already selected (e.g. 2-click mode), complete connection!
+    if (connection.sourcePort && connection.targetPort) {
+      get()._createCableEdge(srcNode, tgtNode, connection.sourcePort, connection.targetPort);
+      return;
+    }
+
+    // If drag-connecting via cursor, prompt Cisco Port Selector for Device A then Device B!
+    openPortSelector(srcNode.id, null, (chosenSrcPort) => {
+      openPortSelector(tgtNode.id, null, (chosenTgtPort) => {
+        get()._createCableEdge(srcNode, tgtNode, chosenSrcPort, chosenTgtPort);
+      });
+    });
+  },
+
+  _createCableEdge: (srcNode, tgtNode, sourcePort, targetPort) => {
+    const { nodes, edges } = get();
     const isEndDevice = (type) => type === 'pc' || type === 'server';
 
-    // If source or target is a PC/Server, replace any existing edge for that PC/Server
-    let updatedEdges = [...edges];
+    const nodeIds = new Set(nodes.map(n => n.id));
+    let updatedEdges = edges.filter(e => e.source && e.target && e.source !== e.target && nodeIds.has(e.source) && nodeIds.has(e.target));
+
     if (isEndDevice(srcNode.data?.type)) {
       updatedEdges = updatedEdges.filter(e => e.source !== srcNode.id && e.target !== srcNode.id);
     }
@@ -75,35 +201,16 @@ const useProjectStore = create((set, get) => ({
       updatedEdges = updatedEdges.filter(e => e.source !== tgtNode.id && e.target !== tgtNode.id);
     }
 
-    // Get already-used ports for each device
-    const usedPorts = (deviceId) => {
-      const used = new Set();
-      for (const e of updatedEdges) {
-        if (e.source === deviceId) used.add(e.data?.sourcePort || '');
-        if (e.target === deviceId) used.add(e.data?.targetPort || '');
-      }
-      return used;
-    };
-
-    // Pick next available port from a device's interfaces
-    const pickPort = (node) => {
-      const ifaces = Object.keys(node.data?.interfaces || {});
-      const used = usedPorts(node.id);
-      return ifaces.find(p => !used.has(p)) || ifaces[0] || 'FastEthernet0';
-    };
-
-    const sourcePort = pickPort(srcNode);
-    const targetPort = pickPort(tgtNode);
-
-    // ── Auto cable type based on Cisco norms ──
     const cableType = autoCableType(srcNode.data?.type, tgtNode.data?.type);
 
+    get()._recordHistory();
+
     const edge = {
-      id: `cable-${Date.now()}`,
-      source: connection.source,
-      target: connection.target,
-      sourceHandle: connection.sourceHandle || 'bottom',
-      targetHandle: connection.targetHandle || 'top',
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      source: srcNode.id,
+      target: tgtNode.id,
+      sourceHandle: 'src-full',
+      targetHandle: 'tgt-full',
       type: 'cable',
       data: {
         cableType,
@@ -112,17 +219,101 @@ const useProjectStore = create((set, get) => ({
       },
     };
 
-    set({ edges: addEdge(edge, updatedEdges) });
+    set({
+      edges: [...updatedEdges, edge],
+      cableToolActive: true,
+      cableToolSourceId: null,
+      cableToolSourcePort: null,
+    });
     get()._autoSave();
   },
 
   // Cable / Edge Operations
   activeEdgeMenu: null,
   reconnectingCable: null,
+  cableToolActive: false,
+  cableToolSourceId: null,
+  cableToolSourcePort: null,
+  portSelector: null,
+
+  toggleCableTool: () => set(s => ({
+    cableToolActive: !s.cableToolActive,
+    cableToolSourceId: null,
+    cableToolSourcePort: null,
+    portSelector: null,
+  })),
+
+  cancelCableTool: () => set({
+    cableToolActive: false,
+    cableToolSourceId: null,
+    cableToolSourcePort: null,
+    portSelector: null,
+  }),
+
+  openPortSelector: (deviceId, mousePos, callback) => {
+    const { nodes, edges } = get();
+    const node = nodes.find(n => n.id === deviceId);
+    if (!node) return;
+
+    const availablePorts = getDeviceAvailablePorts(node, edges);
+    set({
+      portSelector: {
+        deviceId,
+        deviceName: node.data?.hostname || 'Device',
+        modelName: node.data?.model || node.data?.hostname || 'Cisco Device',
+        availablePorts,
+        x: mousePos?.x || (window.innerWidth / 2 - 100),
+        y: mousePos?.y || (window.innerHeight / 2 - 150),
+        callback,
+      },
+    });
+  },
+
+  selectPort: (portName) => {
+    const { portSelector } = get();
+    if (portSelector && portSelector.callback) {
+      portSelector.callback(portName);
+    }
+    set({ portSelector: null });
+  },
+
+  cancelPortSelector: () => set({ portSelector: null }),
+
+  handleCableToolClickDevice: (deviceId, mousePos) => {
+    const { cableToolActive, cableToolSourceId, cableToolSourcePort, onConnect, openPortSelector } = get();
+    if (!cableToolActive) return false;
+
+    // Step 1: Click first device -> Open Cisco Port Selector
+    if (!cableToolSourceId) {
+      openPortSelector(deviceId, mousePos, (chosenPort) => {
+        set({ cableToolSourceId: deviceId, cableToolSourcePort: chosenPort });
+      });
+      return true;
+    }
+
+    // Cannot connect device to itself
+    if (cableToolSourceId === deviceId) {
+      set({ cableToolSourceId: null, cableToolSourcePort: null });
+      return true;
+    }
+
+    // Step 2: Click second device -> Open Cisco Port Selector -> Connect!
+    openPortSelector(deviceId, mousePos, (chosenTargetPort) => {
+      onConnect({
+        source: cableToolSourceId,
+        target: deviceId,
+        sourcePort: cableToolSourcePort,
+        targetPort: chosenTargetPort,
+      });
+      set({ cableToolSourceId: null, cableToolSourcePort: null });
+    });
+    return true;
+  },
 
   setActiveEdgeMenu: (menu) => set({ activeEdgeMenu: menu }),
 
   removeEdge: (edgeId) => {
+    get()._recordHistory();
     set(s => ({
       edges: s.edges.filter(e => e.id !== edgeId),
       activeEdgeMenu: null,
@@ -132,26 +323,47 @@ const useProjectStore = create((set, get) => ({
   },
 
   startReconnectingCable: (edgeId, side = 'target') => {
-    const edge = get().edges.find(e => e.id === edgeId);
+    const { edges } = get();
+    const edge = edges.find(e => e.id === edgeId);
     if (!edge) return;
     const anchorNodeId = side === 'target' ? edge.source : edge.target;
+
+    // Immediately remove old edge from edges list so old connection is disconnected completely
+    const remainingEdges = edges.filter(e => e.id !== edgeId);
+
     set({
-      reconnectingCable: { edgeId, anchorNodeId, side, oldTargetNodeId: side === 'target' ? edge.target : edge.source },
+      edges: remainingEdges,
+      reconnectingCable: {
+        edgeId,
+        anchorNodeId,
+        side,
+        originalEdge: edge,
+      },
       activeEdgeMenu: null,
     });
+    get()._autoSave();
   },
 
   cancelReconnectingCable: () => {
-    set({ reconnectingCable: null, activeEdgeMenu: null });
+    const { reconnectingCable, edges } = get();
+    if (reconnectingCable && reconnectingCable.originalEdge) {
+      set({
+        edges: [...edges, reconnectingCable.originalEdge],
+        reconnectingCable: null,
+        activeEdgeMenu: null,
+      });
+      get()._autoSave();
+    } else {
+      set({ reconnectingCable: null, activeEdgeMenu: null });
+    }
   },
 
   reconnectEdgeToNode: (edgeId, newTargetNodeId, side = 'target') => {
-    const { nodes, edges } = get();
-    const edge = edges.find(e => e.id === edgeId);
-    if (!edge) return;
+    const { nodes, edges, reconnectingCable } = get();
+    const originalEdge = reconnectingCable?.originalEdge || edges.find(e => e.id === edgeId);
 
-    const anchorNodeId = side === 'target' ? edge.source : edge.target;
-    if (anchorNodeId === newTargetNodeId) return; // Cannot connect to self
+    const anchorNodeId = reconnectingCable?.anchorNodeId || (side === 'target' ? originalEdge?.source : originalEdge?.target);
+    if (!anchorNodeId || anchorNodeId === newTargetNodeId) return;
 
     const anchorNode = nodes.find(n => n.id === anchorNodeId);
     const targetNode = nodes.find(n => n.id === newTargetNodeId);
@@ -173,49 +385,37 @@ const useProjectStore = create((set, get) => ({
       return used;
     };
 
-    const pickPort = (node) => {
-      const ifaces = Object.keys(node.data?.interfaces || {});
-      const used = usedPorts(node.id);
-      return ifaces.find(p => !used.has(p)) || ifaces[0] || 'FastEthernet0';
-    };
-
-    const anchorPort = side === 'target' ? (edge.data?.sourcePort || pickPort(anchorNode)) : pickPort(anchorNode);
-    const targetPort = pickPort(targetNode);
-
-    // Compute optimal handle IDs based on relative device positions
-    const dx = (targetNode.position?.x || 0) - (anchorNode.position?.x || 0);
-    const dy = (targetNode.position?.y || 0) - (anchorNode.position?.y || 0);
-
-    let srcHandle = 'bottom';
-    let tgtHandle = 'top';
-
-    if (Math.abs(dy) > Math.abs(dx)) {
-      if (dy > 0) {
-        srcHandle = 'bottom';
-        tgtHandle = 'top';
-      } else {
-        srcHandle = 'top';
-        tgtHandle = 'bottom';
-      }
-    } else {
-      if (dx > 0) {
-        srcHandle = 'right';
-        tgtHandle = 'left';
-      } else {
-        srcHandle = 'left';
-        tgtHandle = 'right';
-      }
+    if (targetNode.data?.type === 'switch' && usedPorts(targetNode.id).size >= 24) {
+      alert(`% Port capacity exceeded. Switch (${targetNode.data?.hostname || 'Switch'}) supports a maximum of 24 FastEthernet ports.`);
+      return;
     }
 
+    const pickPort = (node) => {
+      let ifaces = Object.keys(node.data?.interfaces || {});
+      if (node.data?.type === 'switch') {
+        ifaces = ifaces.filter(p => p.startsWith('FastEthernet0/'));
+        if (ifaces.length > 24) ifaces = ifaces.slice(0, 24);
+      }
+      const used = usedPorts(node.id);
+      return ifaces.find(p => !used.has(p)) || ifaces[0] || 'FastEthernet0/1';
+    };
+
+    const anchorPort = side === 'target'
+      ? (originalEdge?.data?.sourcePort || pickPort(anchorNode))
+      : pickPort(anchorNode);
+    const targetPort = pickPort(targetNode);
+
+    const cableType = originalEdge?.data?.cableType || autoCableType(anchorNode.data?.type, targetNode.data?.type);
+
     const newEdge = {
-      id: edgeId,
+      id: `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       source: side === 'target' ? anchorNodeId : newTargetNodeId,
       target: side === 'target' ? newTargetNodeId : anchorNodeId,
-      sourceHandle: side === 'target' ? srcHandle : tgtHandle,
-      targetHandle: side === 'target' ? tgtHandle : srcHandle,
+      sourceHandle: 'src-full',
+      targetHandle: 'tgt-full',
       type: 'cable',
       data: {
-        cableType: edge.data?.cableType || 'copper-straight',
+        cableType,
         sourcePort: side === 'target' ? anchorPort : targetPort,
         targetPort: side === 'target' ? targetPort : anchorPort,
       },
@@ -406,6 +606,35 @@ const useProjectStore = create((set, get) => ({
     return state;
   },
 
+  resetStore: () => {
+    try {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('pkt_lab_cache_')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (e) {}
+
+    set({
+      projectId: null,
+      questionId: null,
+      questionTitle: '',
+      questionText: '',
+      evaluationPlan: null,
+      questionTimeLimit: 0,
+      nodes: [],
+      edges: [],
+      selectedDevice: null,
+      openTerminals: [],
+      saving: false,
+      lastSaved: null,
+      submitResult: null,
+      submitting: false,
+      reconnectingCable: null,
+      activeEdgeMenu: null,
+    });
+  },
+
   // Project operations
   loadProject: async (projectId) => {
     try {
@@ -415,25 +644,7 @@ const useProjectStore = create((set, get) => ({
       });
       if (!res.ok) throw new Error('Failed to load project');
       const project = await res.json();
-      let state = project.state || { nodes: [], edges: [] };
-
-      // Check local storage cache for any unsaved changes prior to refresh
-      try {
-        const rawLocal = localStorage.getItem(`pkt_lab_cache_${projectId}`);
-        if (rawLocal) {
-          const parsedLocal = JSON.parse(rawLocal);
-          if (parsedLocal && parsedLocal.state && Array.isArray(parsedLocal.state.nodes)) {
-            // If local cache has nodes and server state is empty or has fewer nodes/interfaces, preference local cache
-            const localNodes = parsedLocal.state.nodes;
-            const serverNodes = state.nodes || [];
-            if (localNodes.length >= serverNodes.length && localNodes.length > 0) {
-              state = parsedLocal.state;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Local cache recovery failed:', e);
-      }
+      const state = project.state || { nodes: [], edges: [] };
 
       // Convert stored nodes back to React Flow format
       const nodes = (state.nodes || []).map(n => ({
@@ -450,9 +661,9 @@ const useProjectStore = create((set, get) => ({
         targetHandle: e.targetHandle || '',
         type: 'cable',
         data: {
-          cableType: e.cableType || 'copper-straight',
-          sourcePort: e.sourcePort || '',
-          targetPort: e.targetPort || '',
+          cableType: e.cableType || e.data?.cableType || 'copper-straight',
+          sourcePort: e.sourcePort || e.data?.sourcePort || '',
+          targetPort: e.targetPort || e.data?.targetPort || '',
         },
       }));
 
@@ -461,6 +672,8 @@ const useProjectStore = create((set, get) => ({
         questionId: project.question_id,
         nodes,
         edges,
+        openTerminals: [],
+        selectedDevice: null,
         submitResult: null,
       });
 

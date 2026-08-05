@@ -28,14 +28,56 @@ const CableEdge = memo(({
   markerEnd,
   selected,
 }) => {
-  const [edgePath, labelX, labelY] = getBezierPath({
-    sourceX, sourceY, targetX, targetY,
-    sourcePosition, targetPosition,
-  });
-
   const nodes = useProjectStore(s => s.nodes);
+  const edges = useProjectStore(s => s.edges);
   const srcNode = nodes.find(n => n.id === source);
   const tgtNode = nodes.find(n => n.id === target);
+
+  // Shift Y coordinates down 16px to align directly with 3D block top face (ZERO GAP!)
+  const sy = sourceY + 16;
+  const ty = targetY + 16;
+
+  // Find all parallel cables between this pair of devices (in either direction)
+  const parallelEdges = edges.filter(e =>
+    (e.source === source && e.target === target) ||
+    (e.source === target && e.target === source)
+  );
+
+  const edgeIndex = parallelEdges.findIndex(e => e.id === id);
+  const totalParallel = parallelEdges.length;
+
+  let edgePath = '';
+  let labelX = (sourceX + targetX) / 2;
+  let labelY = (sy + ty) / 2;
+
+  if (totalParallel > 1 && edgeIndex !== -1) {
+    // Calculate perpendicular offset vector for curved parallel cables
+    const dx = targetX - sourceX;
+    const dy = ty - sy;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+
+    // Offset multiplier: centered around 0 (e.g. -1, 0, 1)
+    const offsetIndex = edgeIndex - (totalParallel - 1) / 2;
+    const offsetDistance = offsetIndex * 36; // 36px spacing between parallel cables
+
+    // Midpoint control point for quadratic bezier curve
+    const midX = (sourceX + targetX) / 2 + nx * offsetDistance;
+    const midY = (sy + ty) / 2 + ny * offsetDistance;
+
+    edgePath = `M ${sourceX} ${sy} Q ${midX} ${midY} ${targetX} ${ty}`;
+    labelX = (sourceX + 2 * midX + targetX) / 4;
+    labelY = (sy + 2 * midY + ty) / 4;
+  } else {
+    const [path, lx, ly] = getBezierPath({
+      sourceX, sourceY: sy, targetX, targetY: ty,
+      sourcePosition, targetPosition,
+    });
+    edgePath = path;
+    labelX = lx;
+    labelY = ly;
+  }
 
   const sourcePort = data?.sourcePort || '';
   const targetPort = data?.targetPort || '';
@@ -81,16 +123,16 @@ const CableEdge = memo(({
 
   // Calculate offset direction perpendicular to cable for port labels
   const dx = targetX - sourceX;
-  const dy = targetY - sourceY;
+  const dy = ty - sy;
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   const px = -dy / len;
   const py = dx / len;
   const labelOffset = 18;
 
   const srcLabelX = sourceX + dx * 0.15 + px * labelOffset;
-  const srcLabelY = sourceY + dy * 0.15 + py * labelOffset;
+  const srcLabelY = sy + dy * 0.15 + py * labelOffset;
   const tgtLabelX = sourceX + dx * 0.85 + px * labelOffset;
-  const tgtLabelY = sourceY + dy * 0.85 + py * labelOffset;
+  const tgtLabelY = sy + dy * 0.85 + py * labelOffset;
 
   // Cisco Link LED coordinates (right near the endpoints)
   const srcLedX = sourceX + dx * 0.08;
@@ -101,15 +143,15 @@ const CableEdge = memo(({
   const portLabelStyle = {
     position: 'absolute',
     pointerEvents: 'none',
-    fontSize: 9, fontWeight: 700,
+    fontSize: 8, fontWeight: 700,
     fontFamily: '"JetBrains Mono", monospace',
     color: '#374151',
     background: 'rgba(255,255,255,0.95)',
-    padding: '2px 6px', borderRadius: 4,
+    padding: '1px 4px', borderRadius: 3,
     border: '1px solid #D1D5DB',
     whiteSpace: 'nowrap',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-    lineHeight: 1.2,
+    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+    lineHeight: 1.1,
     zIndex: 100,
   };
 
@@ -120,7 +162,7 @@ const CableEdge = memo(({
         d={edgePath}
         fill="none"
         stroke="transparent"
-        strokeWidth={20}
+        strokeWidth={16}
         style={{ cursor: 'pointer' }}
         onClick={openMenu}
         onContextMenu={openMenu}
@@ -133,7 +175,7 @@ const CableEdge = memo(({
         style={{
           ...style,
           stroke: strokeColor,
-          strokeWidth: selected ? cs.width + 1.5 : cs.width,
+          strokeWidth: selected ? cs.width + 1 : cs.width,
           strokeDasharray: strokeDash,
           cursor: 'pointer',
           transition: 'stroke 0.3s ease, stroke-width 0.15s ease',
@@ -173,24 +215,24 @@ const CableEdge = memo(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: 'all',
-            fontSize: 9, fontWeight: 700,
+            fontSize: 8, fontWeight: 700,
             color: 'white',
             background: strokeColor,
-            padding: '3px 9px',
-            borderRadius: 12,
+            padding: '2px 6px',
+            borderRadius: 8,
             cursor: 'pointer',
-            boxShadow: `0 2px 8px ${strokeColor}55`,
+            boxShadow: `0 2px 6px ${strokeColor}55`,
             userSelect: 'none',
-            display: 'flex', alignItems: 'center', gap: 5,
+            display: 'flex', alignItems: 'center', gap: 3,
             whiteSpace: 'nowrap',
             transition: 'background 0.3s ease',
             zIndex: 101,
           }}
           title={linkEval.reason}
         >
-          <span>{linkEval.isUp ? '🟢' : linkEval.status === 'mismatch' ? '⚠️' : '🔴'}</span>
+          <span style={{ fontSize: 7 }}>{linkEval.isUp ? '🟢' : linkEval.status === 'mismatch' ? '⚠️' : '🔴'}</span>
           <span>{cs.shortLabel}</span>
-          <span style={{ fontSize: 7, opacity: 0.8 }}>▼</span>
+          <span style={{ fontSize: 6, opacity: 0.8 }}>▼</span>
         </div>
       </EdgeLabelRenderer>
     </>

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.dependencies import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.project import Project
 from app.models.question import Question
 from app.models.evaluation import Evaluation
@@ -34,7 +34,15 @@ def create_project(data: CreateProjectRequest, db: Session = Depends(get_db), us
     question = db.query(Question).filter(Question.id == data.question_id).first()
     if not question:
         raise HTTPException(404, "Question not found")
-        
+
+    existing = db.query(Project).filter(
+        Project.question_id == data.question_id,
+        Project.student_id == user.id,
+    ).order_by(Project.created_at.desc()).first()
+
+    if existing:
+        return _project_to_dict(existing)
+
     project = Project(
         question_id=data.question_id,
         student_id=user.id,
@@ -73,57 +81,17 @@ def update_project(project_id: str, data: SaveProjectRequest, db: Session = Depe
     db.refresh(project)
     return _project_to_dict(project)
 
-@router.post("/{project_id}/evaluate")
-@router.post("/{project_id}/submit")
-def evaluate_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Evaluate project state for grading preview WITHOUT saving an Evaluation record to DB."""
-    project = db.query(Project).filter(Project.id == project_id, Project.student_id == user.id).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
-
-    question = db.query(Question).filter(Question.id == project.question_id).first()
-    if not question or not question.evaluation_plan:
-        raise HTTPException(400, "Question has no evaluation plan")
-
-    network = simulation_engine.build_network(project.state or {})
-    plan = EvaluationPlan(**question.evaluation_plan)
-    eval_result = evaluation_engine.evaluate(network, plan)
-
-    return {
-        "project": _project_to_dict(project),
-        "evaluation": {
-            "id": "preview",
-            "overall_score": eval_result.total_score,
-            "max_score": plan.total_points,
-            "passed": eval_result.passed,
-            "results": eval_result.model_dump(),
-            "evaluated_at": None,
-        }
-    }
-
-
-@router.post("/{project_id}/finish")
-def finish_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Finalize test submission: Evaluate project state and save/update a single Evaluation record in DB."""
+def _upsert_evaluation_and_sync_session(db: Session, project: Project, user: User, plan: EvaluationPlan, eval_result):
+    """Helper to upsert Evaluation record and update TestSession so Results & Session Management are instantly synced."""
     from datetime import datetime
-    project = db.query(Project).filter(Project.id == project_id, Project.student_id == user.id).first()
-    if not project:
-        raise HTTPException(404, "Project not found")
-
-    project.status = "submitted"
-
-    question = db.query(Question).filter(Question.id == project.question_id).first()
-    if not question or not question.evaluation_plan:
-        raise HTTPException(400, "Question has no evaluation plan")
-
-    network = simulation_engine.build_network(project.state or {})
-    plan = EvaluationPlan(**question.evaluation_plan)
-    eval_result = evaluation_engine.evaluate(network, plan)
-
+    from app.models.test_session import TestSession
     now = datetime.now()
 
-    # Upsert single evaluation record per project
-    existing_eval = db.query(Evaluation).filter(Evaluation.project_id == project.id).first()
+    # Find existing evaluation or create new
+    existing_eval = db.query(Evaluation).filter(
+        (Evaluation.project_id == project.id) |
+        ((Evaluation.student_id == user.id) & (Evaluation.question_id == project.question_id))
+    ).order_by(Evaluation.created_at.desc()).first()
 
     if existing_eval:
         existing_eval.evaluation_plan = plan.model_dump()
@@ -153,21 +121,39 @@ def finish_project(project_id: str, db: Session = Depends(get_db), user: User = 
         )
         db.add(evaluation)
 
-    # Sync to TestSession
-    from app.models.test_session import TestSession
+    # Sync TestSession for live Session Management monitoring
     session = db.query(TestSession).filter(
         TestSession.student_id == user.id,
         TestSession.question_id == project.question_id
     ).first()
+
     if session:
-        session.best_score = eval_result.total_score
-        session.passed = eval_result.passed
-        session.is_completed = True
+        session.attempts_used = (session.attempts_used or 0) + 1
+        current_best = session.best_score or 0.0
+        session.best_score = max(current_best, eval_result.total_score)
+        if eval_result.passed:
+            session.passed = True
 
-    if user.role == UserRole.student:
-        user.is_active = False
-        user.attendance = "Absent"
+    return evaluation, session
 
+
+@router.post("/{project_id}/evaluate")
+@router.post("/{project_id}/submit")
+def evaluate_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Evaluate project state and save Evaluation record so score appears in Results & Session Management."""
+    project = db.query(Project).filter(Project.id == project_id, Project.student_id == user.id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    question = db.query(Question).filter(Question.id == project.question_id).first()
+    if not question or not question.evaluation_plan:
+        raise HTTPException(400, "Question has no evaluation plan")
+
+    network = simulation_engine.build_network(project.state or {})
+    plan = EvaluationPlan(**question.evaluation_plan)
+    eval_result = evaluation_engine.evaluate(network, plan)
+
+    evaluation, _ = _upsert_evaluation_and_sync_session(db, project, user, plan, eval_result)
     db.commit()
     db.refresh(evaluation)
 
@@ -181,5 +167,53 @@ def finish_project(project_id: str, db: Session = Depends(get_db), user: User = 
             "results": evaluation.results,
             "evaluated_at": evaluation.evaluated_at.isoformat() if evaluation.evaluated_at else None,
         }
+    }
+
+
+@router.post("/{project_id}/finish")
+def finish_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Finalize test submission: Evaluate project state, complete session, and automatically deactivate student account."""
+    project = db.query(Project).filter(Project.id == project_id, Project.student_id == user.id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    project.status = "submitted"
+
+    question = db.query(Question).filter(Question.id == project.question_id).first()
+    if not question or not question.evaluation_plan:
+        raise HTTPException(400, "Question has no evaluation plan")
+
+    network = simulation_engine.build_network(project.state or {})
+    plan = EvaluationPlan(**question.evaluation_plan)
+    eval_result = evaluation_engine.evaluate(network, plan)
+
+    evaluation, session = _upsert_evaluation_and_sync_session(db, project, user, plan, eval_result)
+
+    if session:
+        session.is_completed = True
+        session.best_score = max(session.best_score or 0.0, eval_result.total_score)
+        if eval_result.passed:
+            session.passed = True
+
+    # Automatically deactivate non-admin student user account after finishing test
+    student_user = db.query(User).filter(User.id == user.id).first()
+    if student_user and "admin" not in str(student_user.role).lower():
+        student_user.is_active = False
+        student_user.attendance = "Absent"
+
+    db.commit()
+    db.refresh(evaluation)
+
+    return {
+        "project": _project_to_dict(project),
+        "evaluation": {
+            "id": evaluation.id,
+            "overall_score": evaluation.overall_score,
+            "max_score": evaluation.max_score,
+            "passed": evaluation.passed,
+            "results": evaluation.results,
+            "evaluated_at": evaluation.evaluated_at.isoformat() if evaluation.evaluated_at else None,
+        },
+        "deactivated": user.role == UserRole.student
     }
 

@@ -13,18 +13,25 @@ async function request(url, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
-  if (res.status === 401) {
-    localStorage.removeItem('token');
-    window.location.href = '/login';
-    throw new Error('Unauthorized');
-  }
   if (res.status === 204) return null;
   let data;
   try {
     data = await res.json();
   } catch {
-    if (!res.ok) throw new Error(`Server error (${res.status})`);
-    return null;
+    data = null;
+  }
+
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('username');
+    if (data && data.detail && data.detail.includes('Concurrent login')) {
+      alert('⚠️ Session Finished: Another device or browser logged into this account. Your test session has been completed.');
+      window.location.href = '/student/results';
+    } else {
+      window.location.href = '/login';
+    }
+    throw new Error(data?.detail || 'Unauthorized');
   }
   if (!res.ok) throw new Error(data.detail || 'Request failed');
   return data;
@@ -42,9 +49,14 @@ export const api = {
   approveUser: (id, isActive) => request(`/auth/users/${id}/approve`, { method: 'PUT', body: JSON.stringify({ is_active: isActive }) }),
   changeUserRole: (id, role) => request(`/auth/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
+  bulkDeactivateUsers: (userIds) => request('/auth/users/bulk-deactivate', { method: 'POST', body: JSON.stringify({ user_ids: userIds }) }),
+  bulkActivateUsers: (userIds) => request('/auth/users/bulk-activate', { method: 'POST', body: JSON.stringify({ user_ids: userIds }) }),
+  bulkDeleteUsers: (userIds) => request('/auth/users/bulk-delete', { method: 'POST', body: JSON.stringify({ user_ids: userIds }) }),
   adminCreateUser: (data) => request('/auth/users/create', { method: 'POST', body: JSON.stringify(data) }),
   adminBulkUploadUsers: (formData) => request('/auth/users/bulk-upload', { method: 'POST', body: formData, headers: {} }),
   downloadSampleTemplate: () => window.open(`${API_BASE}/auth/sample-template`, '_blank'),
+  getSampleTemplateUrl: () => `${API_BASE}/auth/sample-template`,
+  getSampleTemplateExcelUrl: () => `${API_BASE}/auth/sample-template-excel`,
   updateUserAttendance: (userId, attendance) => request(`/auth/users/${userId}/attendance`, { method: 'PUT', body: JSON.stringify({ attendance }) }),
   bulkUpdateAttendance: (sessionSlot, attendance) => request('/auth/users/bulk-attendance', { method: 'POST', body: JSON.stringify({ session_slot: sessionSlot, attendance }) }),
 
@@ -115,3 +127,5 @@ export const api = {
   // Health
   health: () => request('/health'),
 };
+
+export default api;

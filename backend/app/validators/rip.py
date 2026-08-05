@@ -50,12 +50,12 @@ def check_rip_version(network: ParsedNetwork, **params) -> ValidatorResult:
     ])
 def check_rip_network(network: ParsedNetwork, **params) -> ValidatorResult:
     device_name = params.get("device", "")
-    net = params.get("_network_addr", "")
+    net = params.get("network") or params.get("network_address") or params.get("_network_addr") or ""
     device, section, err = _get_rip_section(network, device_name)
     if err:
         return ValidatorResult(passed=False, message=err, score=0.0)
     for line in (section or []):
-        if f"network {net}" in line.lower():
+        if net and f"network {net}" in " ".join(line.lower().split()):
             return ValidatorResult(passed=True, message=f"Network {net} advertised in RIP on {device_name}", score=1.0)
     return ValidatorResult(passed=False, message=f"Network {net} not found in RIP on {device_name}", score=0.0)
 

@@ -1,8 +1,11 @@
 import { useRef } from 'react';
+import useProjectStore from '../../store/projectStore.js';
 import { DEVICE_CATALOG } from './DeviceRegistry.js';
 
 export default function DevicePalette() {
   const dragImgRef = useRef(null);
+  const cableToolActive = useProjectStore(s => s.cableToolActive);
+  const toggleCableTool = useProjectStore(s => s.toggleCableTool);
 
   const onDragStart = (e, type, icon) => {
     e.dataTransfer.setData('application/reactflow-type', type);
@@ -49,6 +52,34 @@ export default function DevicePalette() {
         <h3 style={{ fontSize: 13, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 1 }}>
           Devices
         </h3>
+      </div>
+
+      {/* ── CONNECTIONS / CABLE TOOL SECTION ── */}
+      <div style={{ padding: '8px 10px', borderBottom: '1px solid #F3F4F6' }}>
+        <p style={{ fontSize: 10, fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginBottom: 6, letterSpacing: 0.5 }}>
+          CONNECTIONS
+        </p>
+        <div
+          onClick={toggleCableTool}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 10px', borderRadius: 10, cursor: 'pointer',
+            border: cableToolActive ? '2px solid #F59E0B' : '1px solid #F0F1F6',
+            background: cableToolActive ? '#FEF3C7' : '#FAFBFC',
+            boxShadow: cableToolActive ? '0 2px 10px rgba(245, 158, 11, 0.25)' : 'none',
+            transition: 'all 0.15s',
+          }}
+        >
+          <span style={{ fontSize: 22 }}>⚡</span>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: cableToolActive ? '#B45309' : '#1F2937' }}>
+              {cableToolActive ? '⚡ Cable Active' : 'Auto Cable Wire'}
+            </div>
+            <div style={{ fontSize: 9, fontWeight: 500, color: cableToolActive ? '#92400E' : '#9CA3AF', marginTop: 1 }}>
+              {cableToolActive ? 'Click devices to connect' : 'Click 2 devices to connect'}
+            </div>
+          </div>
+        </div>
       </div>
 
       {Object.entries(categories).map(([cat, devices]) => (

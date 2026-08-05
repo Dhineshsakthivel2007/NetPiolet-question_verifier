@@ -20,5 +20,7 @@ class TestSession(TimestampMixin, Base):
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
     proctor_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     warning_count: Mapped[int] = mapped_column(Integer, default=0)
+    dual_login_flag: Mapped[bool] = mapped_column(Boolean, default=False)
+    completion_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     question = relationship("Question")

@@ -38,16 +38,16 @@ def check_dhcp_pool(network: ParsedNetwork, **params) -> ValidatorResult:
 def check_dhcp_network(network: ParsedNetwork, **params) -> ValidatorResult:
     device_name = params.get("device", "")
     pool_name = params.get("pool_name", "")
-    net = params.get("_network_addr", "")
+    net = params.get("network") or params.get("network_address") or params.get("_network_addr") or ""
     mask = params.get("mask", "")
     device = network.get_device_by_name(device_name)
     if not device:
         return ValidatorResult(passed=False, message=f"Device '{device_name}' not found", score=0.0)
     section = device.running_config.get_section(f"ip dhcp pool {pool_name}")
-    expected = f"network {net} {mask}"
     for line in (section or []):
-        if expected.lower() in line.lower():
-            return ValidatorResult(passed=True, message=f"DHCP pool network {net} {mask} configured", score=1.0)
+        clean_line = " ".join(line.lower().split())
+        if net and f"network {net}" in clean_line:
+            return ValidatorResult(passed=True, message=f"DHCP pool network {net} configured", score=1.0)
     return ValidatorResult(passed=False, message=f"Network {net} {mask} not found in DHCP pool '{pool_name}'", score=0.0)
 
 

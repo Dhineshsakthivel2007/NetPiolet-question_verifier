@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
 
-const LEVEL_ICONS = ['💎', '🔷', '☁️', '⚡', '🔥', '🌟', '🎯', '🏆'];
+const LEVEL_ICONS = ['💻', '📟', '🖧', '⚡', '🛡️', '☁️', '🏆'];
 
 export default function LevelsPage() {
   const [levels, setLevels] = useState([]);

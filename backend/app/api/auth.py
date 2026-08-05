@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.session import get_db
-from app.dependencies import get_current_user, require_admin
+from app.dependencies import get_current_user, require_admin, require_admin_or_professor
 from app.models.user import User, UserRole
 from app.schemas import (
     GoogleLoginRequest, TokenResponse, UserApproveRequest,
@@ -92,7 +92,25 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
 
     token = auth_service.create_access_token({"sub": str(selected_user.id), "username": selected_user.username, "role": selected_user.role.value})
-    return TokenResponse(access_token=token, role=selected_user.role.value, username=selected_user.username)
+
+    # Single Active Session Enforcement: Flag dual login on student test sessions & set current token
+    role_str = selected_user.role.value if hasattr(selected_user.role, 'value') else str(selected_user.role)
+    if role_str == "student":
+        from app.models.test_session import TestSession
+        student_sessions = db.query(TestSession).filter(
+            TestSession.student_id == selected_user.id
+        ).all()
+        for ts in student_sessions:
+            ts.is_completed = True
+            ts.dual_login_flag = True
+            ts.completion_reason = "Dual Login Detected"
+            ts.expires_at = datetime.utcnow()
+
+    selected_user.is_active = True
+    selected_user.current_session_token = token
+    db.commit()
+
+    return TokenResponse(access_token=token, role=role_str, username=selected_user.username)
 
 
 import re
@@ -136,16 +154,30 @@ def google_login(data: GoogleLoginRequest, db: Session = Depends(get_db)):
     if not email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google account email not found")
 
-    # Match user by email case-insensitively
-    from sqlalchemy import func
-    user = db.query(User).filter(func.lower(User.email) == email).first()
+    uname_prefix = email.split("@")[0].split(".")[0]  # e.g. "nandhakumara"
+
+    # Match user by email case-insensitively, or username/email prefix match
+    from sqlalchemy import func, or_
+    user = db.query(User).filter(
+        or_(
+            func.lower(User.email) == email,
+            func.lower(User.email).like(f"{uname_prefix}.%"),
+            func.lower(User.email).like(f"{uname_prefix}@%"),
+            func.lower(User.username).like(f"{uname_prefix}%")
+        )
+    ).order_by(User.created_at.asc()).first()
+
+    if user and user.email != email:
+        # Update email to actual authenticated Google email
+        user.email = email
+        db.commit()
 
     if not user:
         # Create new user for Google login
         username = payload.get("name") or email.split("@")[0]
         avatar_url = payload.get("picture", "")
         google_id = payload.get("sub", "")
-        
+
         user = User(
             username=username,
             email=email,
@@ -154,7 +186,7 @@ def google_login(data: GoogleLoginRequest, db: Session = Depends(get_db)):
             is_active=True,
             google_id=google_id,
             avatar_url=avatar_url,
-            attendance="Present",
+            attendance="Absent",
         )
         db.add(user)
         db.commit()
@@ -174,7 +206,25 @@ def google_login(data: GoogleLoginRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
 
     token = auth_service.create_access_token({"sub": str(user.id), "username": user.username, "role": user.role.value})
-    return TokenResponse(access_token=token, role=user.role.value, username=user.username)
+
+    # Single Active Session Enforcement: Flag dual login on student test sessions & set current token
+    role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
+    if role_str == "student":
+        from app.models.test_session import TestSession
+        student_sessions = db.query(TestSession).filter(
+            TestSession.student_id == user.id
+        ).all()
+        for ts in student_sessions:
+            ts.is_completed = True
+            ts.dual_login_flag = True
+            ts.completion_reason = "Dual Login Detected"
+            ts.expires_at = datetime.utcnow()
+
+    user.is_active = True
+    user.current_session_token = token
+    db.commit()
+
+    return TokenResponse(access_token=token, role=role_str, username=user.username)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -189,8 +239,8 @@ def get_me(current_user: User = Depends(get_current_user)):
 # ---- Admin: User Management ----
 
 @router.get("/users", response_model=list[UserResponse])
-def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """List all users (admin only)."""
+def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """List all users (admin or professor)."""
     users = db.query(User).order_by(User.created_at.desc()).all()
     res = []
     for u in users:
@@ -229,40 +279,119 @@ def change_role(user_id: str, data: UserRoleRequest, db: Session = Depends(get_d
 
 
 @router.delete("/users/{user_id}")
-def delete_user(user_id: str, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Delete a user and all related records (admin only)."""
+def delete_user(user_id: str, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Delete a user and all related records (admin or professor)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
-    # Cascade delete related records to avoid FK constraint errors
+    try:
+        from app.models.test_session import TestSession
+        from app.models.evaluation import Evaluation
+        from app.models.report import Report
+        from app.models.question import Question
+
+        # 1. Delete reports linked to user's evaluations
+        eval_ids = [e.id for e in db.query(Evaluation.id).filter(
+            (Evaluation.student_id == user_id) | (Evaluation.created_by == user_id)
+        ).all()]
+        if eval_ids:
+            db.query(Report).filter(Report.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+
+        # 2. Delete evaluations (clears references to projects.id)
+        db.query(Evaluation).filter(
+            (Evaluation.student_id == user_id) | (Evaluation.created_by == user_id)
+        ).delete(synchronize_session=False)
+
+        # 3. Delete test sessions
+        db.query(TestSession).filter(TestSession.student_id == user_id).delete(synchronize_session=False)
+
+        # 4. Delete projects
+        try:
+            from app.models.project import Project
+            db.query(Project).filter(Project.student_id == user_id).delete(synchronize_session=False)
+        except Exception:
+            pass
+
+        # 5. Nullify questions created_by
+        db.query(Question).filter(Question.created_by == user_id).update({"created_by": None}, synchronize_session=False)
+
+        # 6. Delete user
+        db.delete(user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
+    return {"message": f"User '{user.username}' and all related records deleted"}
+
+
+class BulkUsersRequest(BaseModel):
+    user_ids: list[str]
+
+
+@router.post("/users/bulk-deactivate")
+def bulk_deactivate_users(data: BulkUsersRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Deactivate multiple users at once."""
+    target_ids = [uid for uid in data.user_ids if uid != str(admin.id)]
+    if not target_ids:
+        return {"message": "No valid users selected for deactivation"}
+
+    count = db.query(User).filter(User.id.in_(target_ids)).update({"is_active": False}, synchronize_session=False)
+    db.commit()
+    return {"message": f"Successfully deactivated {count} users", "deactivated_count": count}
+
+
+@router.post("/users/bulk-activate")
+def bulk_activate_users(data: BulkUsersRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Activate multiple users at once."""
+    target_ids = [uid for uid in data.user_ids if uid != str(admin.id)]
+    if not target_ids:
+        return {"message": "No valid users selected for activation"}
+
+    count = db.query(User).filter(User.id.in_(target_ids)).update({"is_active": True}, synchronize_session=False)
+    db.commit()
+    return {"message": f"Successfully activated {count} users", "activated_count": count}
+
+
+@router.post("/users/bulk-delete")
+def bulk_delete_users(data: BulkUsersRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Delete multiple users and all related records at once."""
+    target_ids = [uid for uid in data.user_ids if uid != str(admin.id)]
+    if not target_ids:
+        return {"message": "No valid users selected for deletion"}
+
+    deleted_count = 0
     from app.models.test_session import TestSession
     from app.models.evaluation import Evaluation
     from app.models.report import Report
     from app.models.question import Question
-    try:
-        from app.models.project import Project
-        db.query(Project).filter(Project.student_id == user_id).delete(synchronize_session=False)
-    except Exception:
-        pass
 
-    # Delete reports linked to user's evaluations
-    eval_ids = [e.id for e in db.query(Evaluation.id).filter(
-        (Evaluation.student_id == user_id) | (Evaluation.created_by == user_id)
-    ).all()]
-    if eval_ids:
-        db.query(Report).filter(Report.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+    for uid in target_ids:
+        user = db.query(User).filter(User.id == uid).first()
+        if not user:
+            continue
+        try:
+            eval_ids = [e.id for e in db.query(Evaluation.id).filter((Evaluation.student_id == uid) | (Evaluation.created_by == uid)).all()]
+            if eval_ids:
+                db.query(Report).filter(Report.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+            db.query(Evaluation).filter((Evaluation.student_id == uid) | (Evaluation.created_by == uid)).delete(synchronize_session=False)
+            db.query(TestSession).filter(TestSession.student_id == uid).delete(synchronize_session=False)
+            try:
+                from app.models.project import Project
+                db.query(Project).filter(Project.student_id == uid).delete(synchronize_session=False)
+            except Exception:
+                pass
+            db.query(Question).filter(Question.created_by == uid).update({"created_by": None}, synchronize_session=False)
+            db.delete(user)
+            deleted_count += 1
+        except Exception:
+            db.rollback()
 
-    db.query(TestSession).filter(TestSession.student_id == user_id).delete(synchronize_session=False)
-    db.query(Evaluation).filter(Evaluation.student_id == user_id).delete(synchronize_session=False)
-    db.query(Evaluation).filter(Evaluation.created_by == user_id).update({"created_by": None}, synchronize_session=False)
-    db.query(Question).filter(Question.created_by == user_id).update({"created_by": None}, synchronize_session=False)
-
-    db.delete(user)
     db.commit()
-    return {"message": "User and all related records deleted"}
+    return {"message": f"Successfully deleted {deleted_count} users", "deleted_count": deleted_count}
 
 
 class UserSlotUpdateRequest(BaseModel):
@@ -270,8 +399,8 @@ class UserSlotUpdateRequest(BaseModel):
 
 
 @router.put("/users/{user_id}/slot")
-def update_user_slot(user_id: str, data: UserSlotUpdateRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Update student slot timing (admin only)."""
+def update_user_slot(user_id: str, data: UserSlotUpdateRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Update student slot timing (admin or professor)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -285,8 +414,8 @@ class UserAttendanceRequest(BaseModel):
 
 
 @router.put("/users/{user_id}/attendance")
-def update_user_attendance(user_id: str, data: UserAttendanceRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Update student attendance status (admin only)."""
+def update_user_attendance(user_id: str, data: UserAttendanceRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Update student attendance status (admin or professor)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -303,8 +432,8 @@ class BulkAttendanceRequest(BaseModel):
 
 
 @router.post("/users/bulk-attendance")
-def bulk_update_attendance(data: BulkAttendanceRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Mark attendance in bulk by slot timing or user IDs (admin only)."""
+def bulk_update_attendance(data: BulkAttendanceRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Mark attendance in bulk by slot timing or user IDs (admin or professor)."""
     normalized = data.attendance.strip().title()
     target_status = normalized if normalized in ("Present", "Absent") else "Present"
     query = db.query(User).filter(User.role == UserRole.student)
@@ -337,13 +466,16 @@ class AdminUserCreate(BaseModel):
 
 
 @router.post("/users/create", status_code=status.HTTP_201_CREATED)
-def admin_create_user(data: AdminUserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Admin creates a user — account is immediately active. Allows same student for different slot timings."""
-    slot_val = data.session_slot.strip() if data.session_slot else None
-    if data.roll_number and db.query(User).filter(User.roll_number == data.roll_number, User.session_slot == slot_val).first():
-        raise HTTPException(status_code=400, detail=f"Roll Number '{data.roll_number}' is already registered for slot '{slot_val or 'No Slot'}'.")
-    if db.query(User).filter(User.email == data.email, User.session_slot == slot_val).first():
-        raise HTTPException(status_code=400, detail=f"Email '{data.email}' is already registered for slot '{slot_val or 'No Slot'}'.")
+def admin_create_user(data: AdminUserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Admin or Professor creates a user — account is immediately active."""
+    slot_val = data.session_slot.strip() if (data.session_slot and data.session_slot.strip()) else None
+    roll_val = data.roll_number.strip() if (data.roll_number and data.roll_number.strip()) else None
+    email_val = data.email.strip().lower()
+
+    if roll_val and db.query(User).filter(User.roll_number == roll_val, User.session_slot == slot_val).first():
+        raise HTTPException(status_code=400, detail=f"Roll Number '{roll_val}' is already registered for slot '{slot_val or 'No Slot'}'.")
+    if db.query(User).filter(User.email == email_val, User.session_slot == slot_val).first():
+        raise HTTPException(status_code=400, detail=f"Email '{email_val}' is already registered for slot '{slot_val or 'No Slot'}'.")
 
     try:
         role = UserRole(data.role)
@@ -351,15 +483,15 @@ def admin_create_user(data: AdminUserCreate, db: Session = Depends(get_db), admi
         raise HTTPException(status_code=400, detail="Invalid role. Must be: admin, professor, student")
 
     user = User(
-        username=data.username,
-        email=data.email,
+        username=data.username.strip(),
+        email=email_val,
         hashed_password=auth_service.hash_password(data.password),
         role=role,
         is_active=True,
-        roll_number=data.roll_number if data.roll_number else None,
+        roll_number=roll_val,
         session_slot=slot_val,
-        level_id=data.level_id if data.level_id else None,
-        attendance="Present" if role == UserRole.student else "Present",
+        level_id=data.level_id if (data.level_id and data.level_id.strip()) else None,
+        attendance="Absent",
     )
     db.add(user)
     db.commit()
@@ -367,20 +499,72 @@ def admin_create_user(data: AdminUserCreate, db: Session = Depends(get_db), admi
     return {"message": f"User '{data.username}' created and activated.", "user_id": user.id}
 
 
-# ---- Sample Template Download Endpoint ----
-
 @router.get("/sample-template")
 def download_sample_template():
     """Download sample CSV template for bulk student import."""
     csv_content = (
         "roll_number,username,email,password,role,session_slot,level_name\n"
         "7376221EC101,dhinesh,dhineshs.ad24@bitsathy.ac.in,Pass123!,student,09:00-11:00,Level 1\n"
-        "7376221EC102,dhinesh,dhinesh2@bitsathy.ac.in,Pass123!,student,14:00-16:00,Level 2\n"
+        "7376221EC102,nandha,nandhakumars.cs24@bitsathy.ac.in,Pass123!,student,14:00-16:00,Level 2\n"
     )
     return Response(
         content=csv_content,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=sample_student_import.csv"}
+    )
+
+
+@router.get("/sample-template-excel")
+def download_sample_template_excel():
+    """Download sample Excel (.xlsx) template for bulk student import."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Student Import Template"
+
+    headers = ["roll_number", "username", "email", "password", "role", "session_slot", "level_name"]
+    ws.append(headers)
+
+    sample_rows = [
+        ["7376221EC101", "dhinesh", "dhineshs.ad24@bitsathy.ac.in", "Pass123!", "student", "09:00-11:00", "Level 1"],
+        ["7376221EC102", "nandha", "nandhakumars.cs24@bitsathy.ac.in", "Pass123!", "student", "14:00-16:00", "Level 2"],
+    ]
+    for row in sample_rows:
+        ws.append(row)
+
+    # Style header row
+    header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin', color='D1D5DB'),
+        right=Side(style='thin', color='D1D5DB'),
+        top=Side(style='thin', color='D1D5DB'),
+        bottom=Side(style='thin', color='D1D5DB')
+    )
+
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = cell.column_letter
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=sample_student_import.xlsx"}
     )
 
 

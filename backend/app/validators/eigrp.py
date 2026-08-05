@@ -31,7 +31,7 @@ def check_eigrp_as(network: ParsedNetwork, **params) -> ValidatorResult:
     ])
 def check_eigrp_network(network: ParsedNetwork, **params) -> ValidatorResult:
     device_name = params.get("device", "")
-    net = params.get("_network_addr", "")
+    net = params.get("network") or params.get("network_address") or params.get("_network_addr") or ""
     wildcard = params.get("wildcard", "")
     device = network.get_device_by_name(device_name)
     if not device:
@@ -39,12 +39,9 @@ def check_eigrp_network(network: ParsedNetwork, **params) -> ValidatorResult:
     sections = device.running_config.get_all_sections("router eigrp")
     for section in sections:
         for line in section:
-            if wildcard:
-                if f"network {net} {wildcard}".lower() in line.lower():
-                    return ValidatorResult(passed=True, message=f"Network {net} {wildcard} in EIGRP on {device_name}", score=1.0)
-            else:
-                if f"network {net}".lower() in line.lower():
-                    return ValidatorResult(passed=True, message=f"Network {net} in EIGRP on {device_name}", score=1.0)
+            clean_line = " ".join(line.lower().split())
+            if net and f"network {net}" in clean_line:
+                return ValidatorResult(passed=True, message=f"Network {net} advertised in EIGRP on {device_name}", score=1.0)
     return ValidatorResult(passed=False, message=f"Network {net} not found in EIGRP on {device_name}", score=0.0)
 
 

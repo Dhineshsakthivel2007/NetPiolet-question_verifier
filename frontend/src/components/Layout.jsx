@@ -74,7 +74,7 @@ export default function Layout() {
               {sidebarOpen && <span style={{ opacity: 1 }}>{item.label}</span>}
             </NavLink>
           ))}
-          {role === 'admin' && (
+          {(role === 'admin' || role === 'professor') && (
             <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
               <FaUsersCog className="nav-icon" size={20} />
               {sidebarOpen && <span style={{ opacity: 1 }}>Users</span>}

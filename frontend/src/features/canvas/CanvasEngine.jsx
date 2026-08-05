@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css';
 import DeviceNode from '../devices/DeviceNode.jsx';
 import TextNoteNode from '../devices/TextNoteNode.jsx';
 import CableEdge from './CableEdge.jsx';
+import CiscoPortSelectorModal from './CiscoPortSelectorModal.jsx';
 import useProjectStore, { autoCableType } from '../../store/projectStore.js';
 import { evaluateLinkStatus } from './linkEvaluator.js';
 
@@ -85,30 +86,30 @@ function WireContextMenu({ menu, edge, nodes, onClose }) {
         </div>
 
         <div style={{ padding: '6px 0' }}>
-          {/* Reconnect target end */}
+          {/* Option 1: Disconnect Right Device, keep Left Device connected & attach to cursor */}
           <button style={{ ...btn, background: 'transparent', color: '#7C5CFC' }}
             onMouseEnter={e => e.currentTarget.style.background = '#F5F3FF'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             onClick={() => startReconnectingCable(edge.id, 'target')}>
             <span style={{ fontSize: 16, width: 22, textAlign: 'center' }}>🔌</span>
             <div>
-              <div>Reconnect Wire to Cursor</div>
-              <div style={{ fontSize: 10, fontWeight: 400, color: '#9CA3AF', marginTop: 1 }}>
-                Unplug from {tgtName} & drag to new device
+              <div style={{ color: '#1E1B4B', fontWeight: 700 }}>Disconnect Right ({tgtName})</div>
+              <div style={{ fontSize: 10, fontWeight: 500, color: '#6B7280', marginTop: 1 }}>
+                Keep {srcName} connected — drag cable to cursor
               </div>
             </div>
           </button>
 
-          {/* Reconnect source end */}
+          {/* Option 2: Disconnect Left Device, keep Right Device connected & attach to cursor */}
           <button style={{ ...btn, background: 'transparent', color: '#6366F1' }}
             onMouseEnter={e => e.currentTarget.style.background = '#EEF2FF'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             onClick={() => startReconnectingCable(edge.id, 'source')}>
-            <span style={{ fontSize: 16, width: 22, textAlign: 'center' }}>🔄</span>
+            <span style={{ fontSize: 16, width: 22, textAlign: 'center' }}>🔌</span>
             <div>
-              <div>Reconnect Other End</div>
-              <div style={{ fontSize: 10, fontWeight: 400, color: '#9CA3AF', marginTop: 1 }}>
-                Unplug from {srcName} & drag to new device
+              <div style={{ color: '#1E1B4B', fontWeight: 700 }}>Disconnect Left ({srcName})</div>
+              <div style={{ fontSize: 10, fontWeight: 500, color: '#6B7280', marginTop: 1 }}>
+                Keep {tgtName} connected — drag cable to cursor
               </div>
             </div>
           </button>
@@ -193,14 +194,31 @@ function ReconnectBanner({ reconnecting, onCancel }) {
    Live Wire SVG Overlay
    ════════════════════════════════════════════════════════════ */
 function LiveWireOverlay({ anchorNode, cursorPos, cableType }) {
-  if (!anchorNode) return null;
-  const ax = (anchorNode.position?.x || 0) + 65;
-  const ay = (anchorNode.position?.y || 0) + 40;
-  const cx = cursorPos.x;
-  const cy = cursorPos.y;
-  const mx = (ax + cx) / 2;
+  const { getViewport } = useReactFlow();
+  if (!anchorNode || !cursorPos) return null;
+
+  const { x, y, zoom } = getViewport();
+
+  // Compute center point of anchor device node
+  const domNode = typeof document !== 'undefined' ? document.querySelector(`[data-id="${anchorNode.id}"]`) : null;
+  const w = domNode ? domNode.offsetWidth : 74;
+  const h = domNode ? domNode.offsetHeight : 50;
+  const nx = anchorNode.position?.x || 0;
+  const ny = anchorNode.position?.y || 0;
+
+  const flowAx = nx + w / 2;
+  const flowAy = ny + h / 2;
+
+  // Convert flow coordinates to canvas SVG screen pixels
+  const ax = flowAx * zoom + x;
+  const ay = flowAy * zoom + y;
+  const cx = cursorPos.x * zoom + x;
+  const cy = cursorPos.y * zoom + y;
 
   const color = CABLE_COLORS[cableType] || '#7C5CFC';
+
+  // Smooth bezier curve matching React Flow connection line
+  const pathD = `M ${ax} ${ay} C ${ax} ${(ay + cy) / 2}, ${cx} ${(ay + cy) / 2}, ${cx} ${cy}`;
 
   return (
     <svg style={{
@@ -208,20 +226,30 @@ function LiveWireOverlay({ anchorNode, cursorPos, cableType }) {
       width: '100%', height: '100%',
       pointerEvents: 'none', zIndex: 999,
       overflow: 'visible',
+      filter: `drop-shadow(0 2px 8px ${color}55)`,
     }}>
+      {/* Background Soft Glow Line */}
       <path
-        d={`M ${ax} ${ay} C ${mx} ${ay}, ${mx} ${cy}, ${cx} ${cy}`}
-        fill="none" stroke={color} strokeWidth="3.5"
-        strokeDasharray="8 5" strokeLinecap="round"
+        d={pathD}
+        fill="none" stroke={color} strokeWidth="6"
+        strokeOpacity="0.25" strokeLinecap="round"
+      />
+      {/* Main Animated Bezier Connection Line */}
+      <path
+        d={pathD}
+        fill="none" stroke={color} strokeWidth="3"
+        strokeDasharray="7 4" strokeLinecap="round"
       >
-        <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="0.8s" repeatCount="indefinite" />
+        <animate attributeName="stroke-dashoffset" from="0" to="-22" dur="0.6s" repeatCount="indefinite" />
       </path>
-      {/* Unplugged Cursor Connector Tip */}
-      <circle cx={cx} cy={cy} r="7" fill={color} stroke="white" strokeWidth="2.5">
-        <animate attributeName="r" values="6;9;6" dur="1s" repeatCount="indefinite" />
-      </circle>
-      {/* Anchor Connection Dot on Device */}
-      <circle cx={ax} cy={ay} r="6" fill={color} stroke="white" strokeWidth="2" />
+      {/* Anchor Dot on Connected Device Handle */}
+      <circle cx={ax} cy={ay} r="7" fill={color} stroke="#FFFFFF" strokeWidth="2.5" />
+      <circle cx={ax} cy={ay} r="3" fill="#FFFFFF" />
+
+      {/* Unplugged Wire Tip Attached to Cursor with Glowing Pulse */}
+      <circle cx={cx} cy={cy} r="11" fill={color} fillOpacity="0.2" />
+      <circle cx={cx} cy={cy} r="7" fill={color} stroke="#FFFFFF" strokeWidth="2.5" />
+      <circle cx={cx} cy={cy} r="3" fill="#FFFFFF" />
     </svg>
   );
 }
@@ -244,20 +272,38 @@ function CanvasInner() {
   const cancelReconnectingCable = useProjectStore(s => s.cancelReconnectingCable);
   const reconnectEdgeToNode = useProjectStore(s => s.reconnectEdgeToNode);
 
+  const cableToolActive = useProjectStore(s => s.cableToolActive);
+  const cableToolSourceId = useProjectStore(s => s.cableToolSourceId);
+  const cancelCableTool = useProjectStore(s => s.cancelCableTool);
+
   // Store cursor in FLOW coordinates (same space as node positions)
   const [flowCursor, setFlowCursor] = useState({ x: 0, y: 0 });
 
-  // ── Escape to cancel ──
+  const undo = useProjectStore(s => s.undo);
+  const redo = useProjectStore(s => s.redo);
+
+  // ── Ctrl+Z / Cmd+Z (Undo) and Ctrl+Y / Cmd+Shift+Z (Redo) ──
   useEffect(() => {
     const fn = (e) => {
-      if (e.key === 'Escape') {
-        if (reconnectingCable) cancelReconnectingCable();
-        else if (activeEdgeMenu) setActiveEdgeMenu(null);
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+      if (!isCmdOrCtrl) return;
+
+      if (e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) {
+          e.preventDefault();
+          redo();
+        } else {
+          e.preventDefault();
+          undo();
+        }
+      } else if (e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
       }
     };
     window.addEventListener('keydown', fn);
     return () => window.removeEventListener('keydown', fn);
-  }, [reconnectingCable, activeEdgeMenu, cancelReconnectingCable, setActiveEdgeMenu]);
+  }, [undo, redo]);
 
   // ── Mouse move → convert screen to flow coordinates ──
   const onMouseMove = useCallback((e) => {
@@ -293,9 +339,13 @@ function CanvasInner() {
     if (reconnectingCable) cancelReconnectingCable();
   }, [reconnectingCable, cancelReconnectingCable]);
 
-  const isValidConnection = useCallback((c) => c.source !== c.target, []);
+  const isValidConnection = useCallback((c) => {
+    const active = useProjectStore.getState().cableToolActive;
+    if (!active) return false;
+    return c.source !== c.target;
+  }, []);
 
-  // ── Intercept delete-key → show menu instead ──
+  // ── Intercept delete-key → delete cable cleanly ──
   const handleEdgesChange = useCallback((changes) => {
     const removeChanges = changes.filter(c => c.type === 'remove');
     const otherChanges = changes.filter(c => c.type !== 'remove');
@@ -303,30 +353,19 @@ function CanvasInner() {
     if (otherChanges.length > 0) onEdgesChange(otherChanges);
 
     if (removeChanges.length > 0) {
-      const edgeId = removeChanges[0].id;
-      setActiveEdgeMenu({ edgeId, x: window.innerWidth / 2 - 135, y: window.innerHeight / 2 - 100 });
+      removeChanges.forEach(c => {
+        useProjectStore.getState().removeEdge(c.id);
+      });
     }
-  }, [onEdgesChange, setActiveEdgeMenu]);
+  }, [onEdgesChange]);
 
-  function getNodeHandlePoint(node, handleId) {
+  function getNodeHandlePoint(node) {
     if (!node) return { x: 0, y: 0 };
     const nx = node.position?.x || 0;
     const ny = node.position?.y || 0;
-    const w = 130;
-    const h = 90;
-
-    switch (handleId) {
-      case 'top':
-        return { x: nx + w / 2, y: ny };
-      case 'bottom':
-        return { x: nx + w / 2, y: ny + h };
-      case 'left':
-        return { x: nx, y: ny + h / 2 };
-      case 'right':
-        return { x: nx + w, y: ny + h / 2 };
-      default:
-        return { x: nx + w / 2, y: ny + h / 2 };
-    }
+    const w = 74;
+    const h = 50;
+    return { x: nx + w / 2, y: ny + h / 2 };
   }
 
   // ── Compute anchor node & cable type for live wire ──
@@ -343,11 +382,7 @@ function CanvasInner() {
     ? edges.filter(e => e.id !== reconnectingCable.edgeId)
     : edges;
 
-  const anchorHandleId = reconnectingCable && reconnectingEdgeObj
-    ? (reconnectingCable.side === 'target' ? reconnectingEdgeObj.sourceHandle || 'bottom' : reconnectingEdgeObj.targetHandle || 'top')
-    : 'bottom';
-
-  const anchorPt = anchorNode ? getNodeHandlePoint(anchorNode, anchorHandleId) : { x: 0, y: 0 };
+  const anchorPt = anchorNode ? getNodeHandlePoint(anchorNode) : { x: 0, y: 0 };
   const anchorX = anchorPt.x;
   const anchorY = anchorPt.y;
 
@@ -371,6 +406,7 @@ function CanvasInner() {
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}
         isValidConnection={isValidConnection}
+        connectionLineStyle={{ stroke: '#7C5CFC', strokeWidth: 3 }}
         fitView
         snapToGrid
         snapGrid={[15, 15]}
@@ -411,6 +447,7 @@ function CanvasInner() {
       </ReactFlow>
 
       {/* Overlays rendered outside ReactFlow (fixed position) */}
+      <CableToolBanner cableToolActive={cableToolActive} cableToolSourceId={cableToolSourceId} nodes={nodes} onCancel={cancelCableTool} />
       <ReconnectBanner reconnecting={reconnectingCable} onCancel={cancelReconnectingCable} />
       <WireContextMenu
         menu={activeEdgeMenu}
@@ -418,7 +455,46 @@ function CanvasInner() {
         nodes={nodes}
         onClose={() => setActiveEdgeMenu(null)}
       />
+      <CiscoPortSelectorModal
+        selector={useProjectStore(s => s.portSelector)}
+        onSelect={useProjectStore.getState().selectPort}
+        onClose={useProjectStore.getState().cancelPortSelector}
+      />
     </>
+  );
+}
+
+function CableToolBanner({ cableToolActive, cableToolSourceId, nodes, onCancel }) {
+  if (!cableToolActive) return null;
+  const sourceNode = cableToolSourceId ? nodes.find(n => n.id === cableToolSourceId) : null;
+  const sourceName = sourceNode?.data?.hostname || sourceNode?.data?.type || 'Device A';
+
+  return (
+    <div style={{
+      position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 9999, background: '#1E1B4B', color: '#F59E0B',
+      padding: '8px 20px', borderRadius: 28, fontSize: 13, fontWeight: 700,
+      boxShadow: '0 8px 24px rgba(0,0,0,0.25)', border: '1.5px solid #F59E0B',
+      display: 'flex', alignItems: 'center', gap: 12,
+      pointerEvents: 'all', animation: 'fadeIn 0.2s ease',
+    }}>
+      <span style={{ fontSize: 18, animation: 'pulse 1s infinite' }}>⚡</span>
+      <span>
+        {cableToolSourceId
+          ? `Step 2: Click second device to connect cable to ${sourceName}`
+          : 'Step 1: Click first device to start cable connection'}
+      </span>
+      <button
+        onClick={onCancel}
+        style={{
+          background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
+          color: 'white', borderRadius: 14, padding: '3px 12px',
+          cursor: 'pointer', fontSize: 11, fontWeight: 700, marginLeft: 6,
+        }}
+      >
+        Cancel (Ctrl+Z)
+      </button>
+    </div>
   );
 }
 

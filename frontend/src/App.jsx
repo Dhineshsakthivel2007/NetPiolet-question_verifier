@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
 import StudentLayout from './components/StudentLayout.jsx';
@@ -15,6 +16,7 @@ import SessionsPage from './pages/SessionsPage.jsx';
 import StudentTestPage from './pages/StudentTestPage.jsx';
 import StudentResultsPage from './pages/StudentResultsPage.jsx';
 import LabPage from './pages/LabPage.jsx';
+import api from './services/api.js';
 
 function ProtectedRoute({ children, allowedRoles }) {
   const token = localStorage.getItem('token');
@@ -41,9 +43,46 @@ function ProtectedRoute({ children, allowedRoles }) {
   return children;
 }
 
+function GlobalSessionTracker() {
+  useEffect(() => {
+    // 1. Instant cross-tab storage listener
+    const handleStorage = (e) => {
+      if (e.key === 'last_login_timestamp') {
+        const role = localStorage.getItem('role');
+        if (role === 'student') {
+          alert('⚠️ Session Terminated: Another login was detected for this account. Your test session has been completed.');
+          window.location.href = '/student/results';
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    // 2. Server heartbeat check every 4 seconds
+    const interval = setInterval(async () => {
+      const token = localStorage.getItem('token');
+      const role = localStorage.getItem('role');
+      if (token && role === 'student') {
+        try {
+          await api.getMe();
+        } catch (err) {
+          // api.js automatically handles 401 concurrent login and redirects to /student/results
+        }
+      }
+    }, 4000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(interval);
+    };
+  }, []);
+
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <GlobalSessionTracker />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
@@ -58,7 +97,8 @@ export default function App() {
           <Route path="results" element={<ResultsPage />} />
           <Route path="results/:id" element={<ResultDetailPage />} />
           <Route path="sessions" element={<SessionsPage />} />
-          <Route path="admin" element={<ProtectedRoute allowedRoles={['admin']}><AdminPage /></ProtectedRoute>} />
+          <Route path="admin" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><AdminPage /></ProtectedRoute>} />
+          <Route path="users" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><AdminPage /></ProtectedRoute>} />
         </Route>
 
         {/* Student Routes */}

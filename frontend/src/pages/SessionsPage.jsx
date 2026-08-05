@@ -165,6 +165,7 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
 
     if (filter === 'in_progress') return !s.is_completed && !s.proctor_locked;
     if (filter === 'locked') return s.proctor_locked || s.warning_count >= 3;
+    if (filter === 'dual_login') return s.dual_login_flag || s.completion_reason === 'Dual Login Detected';
     if (filter === 'expired') return !s.is_completed && s.expires_at && new Date(s.expires_at) < new Date();
     if (filter === 'completed') return s.is_completed;
 
@@ -211,7 +212,7 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
         </div>
       )}
 
-      <div className="card-grid" style={{ marginBottom: 24 }}>
+      <div className="card-grid" style={{ marginBottom: 24, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
         <div className="stat-card">
           <span className="stat-icon"><MdMonitor size={32} /></span>
           <div className="stat-value">{sessions.length}</div>
@@ -232,6 +233,13 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
           <div className="stat-label">Proctor Locked</div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon" style={{ color: '#F97316' }}>👥</span>
+          <div className="stat-value" style={{ color: '#F97316' }}>
+            {sessions.filter(s => s.dual_login_flag || s.completion_reason === 'Dual Login Detected').length}
+          </div>
+          <div className="stat-label">Dual Login Flagged</div>
+        </div>
+        <div className="stat-card">
           <span className="stat-icon" style={{ color: '#F59E0B' }}>⏰</span>
           <div className="stat-value" style={{ color: '#F59E0B' }}>
             {sessions.filter(s => s.is_completed).length}
@@ -242,11 +250,12 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
 
       <div className="card" style={{ marginBottom: 20, padding: '16px 20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3 }}>
+          <div style={{ display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3, gap: 2 }}>
             {[
               { id: 'all', label: `All (${sessions.length})` },
               { id: 'in_progress', label: '⚡ In Progress' },
-           { id: "locked", label: <> <MdLockPerson size={18} /> Proctor Locked </> },
+              { id: "locked", label: <> <MdLockPerson size={18} /> Proctor Locked </> },
+              { id: 'dual_login', label: <>👥 Dual Login ({sessions.filter(s => s.dual_login_flag || s.completion_reason === 'Dual Login Detected').length})</> },
               { id: 'completed', label: '✅ Finished' },
             ].map(tab => (
               <button
@@ -325,7 +334,17 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
                             {(s.student_name || 'U').charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <div style={{ fontWeight: 700, fontSize: 13 }}>{s.student_name}</div>
+                            <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {s.student_name}
+                              {(s.dual_login_flag || s.completion_reason === 'Dual Login Detected') && (
+                                <span style={{
+                                  background: '#FFEDD5', color: '#C2410C', padding: '1px 7px',
+                                  borderRadius: 100, fontSize: 10, fontWeight: 800, border: '1px solid #FDBA74'
+                                }}>
+                                  ⚠️ Dual Login
+                                </span>
+                              )}
+                            </div>
                             <div style={{ fontSize: 11, color: '#9CA3AF' }}>{s.student_email}</div>
                           </div>
                         </div>

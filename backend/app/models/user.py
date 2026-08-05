@@ -29,5 +29,6 @@ class User(TimestampMixin, Base):
     session_slot: Mapped[str | None] = mapped_column(String(100), nullable=True)
     level_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("levels.id"), nullable=True, index=True)
     attendance: Mapped[str] = mapped_column(String(20), default="Absent")
+    current_session_token: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     level = relationship("Level", foreign_keys=[level_id])

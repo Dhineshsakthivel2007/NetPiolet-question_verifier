@@ -75,8 +75,12 @@ export default function LabPage() {
 
   // Countdown Timer & Admin Unlock Sync Effect
   useEffect(() => {
-    if (!questionId) {
+    const userRole = localStorage.getItem('role');
+    const isAdminOrProf = userRole === 'admin' || userRole === 'professor';
+
+    if (!questionId || isAdminOrProf) {
       setTimeLeft(null);
+      setTimerExpired(false);
       return;
     }
 
@@ -354,7 +358,9 @@ export default function LabPage() {
         localStorage.removeItem('token');
         localStorage.removeItem('role');
         localStorage.removeItem('username');
-        navigate('/login');
+        localStorage.removeItem('testSessionId');
+        localStorage.removeItem('activeQuestionId');
+        navigate('/login', { state: { message: 'Test completed! Your account has been deactivated for this slot until reactivated by your instructor.' } });
       }
     }, 1200);
   };
@@ -402,18 +408,36 @@ export default function LabPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Timer */}
-          {timeLeft !== null && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '4px 14px',
-              borderRadius: 8, fontWeight: 800, fontSize: 15, fontFamily: 'monospace',
-              color: timerColor, background: `${timerColor}15`,
-              border: `1.5px solid ${timerColor}40`,
-              animation: timerPulse ? 'pulse 1s infinite' : 'none',
-            }}>
-              ⏱ {fmtTime(timeLeft)}
-            </div>
-          )}
+          {/* Timer or Admin Test Mode badge */}
+          {(() => {
+            const role = localStorage.getItem('role');
+            if (role === 'admin' || role === 'professor') {
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '4px 14px',
+                  borderRadius: 8, fontWeight: 700, fontSize: 13,
+                  color: '#7C5CFC', background: '#F3E8FF',
+                  border: '1.5px solid #C084FC',
+                }}>
+                  👑 Admin / Instructor Test Mode (Unlimited Time)
+                </div>
+              );
+            }
+            if (timeLeft !== null) {
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '4px 14px',
+                  borderRadius: 8, fontWeight: 800, fontSize: 15, fontFamily: 'monospace',
+                  color: timerColor, background: `${timerColor}15`,
+                  border: `1.5px solid ${timerColor}40`,
+                  animation: timerPulse ? 'pulse 1s infinite' : 'none',
+                }}>
+                  ⏱ {fmtTime(timeLeft)}
+                </div>
+              );
+            }
+            return null;
+          })()}
           {/* Proctoring badge */}
           {warningCount > 0 && (
             <span style={{ fontSize: 12, fontWeight: 700, color: '#F59E0B', background: '#FEF3C7', padding: '3px 10px', borderRadius: 6 }}>
@@ -618,14 +642,31 @@ export default function LabPage() {
               <>
                 {feedbackDone ? (
                   <>
-                    <div style={{ fontSize: 64, marginBottom: 14 }}>🎉</div>
-                    <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Thank You!</h2>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: 15 }}>Feedback submitted successfully.</p>
+                    <div style={{ fontSize: 64, marginBottom: 14 }}>
+                      {(evalResult?.overall_score ?? 0) >= 100 ? '🏆' : evalResult?.passed ? '🎉' : '💪'}
+                    </div>
+                    <h2 style={{
+                      fontSize: 24, fontWeight: 800, marginBottom: 8,
+                      color: (evalResult?.overall_score ?? 0) >= 100 ? '#10B981' : evalResult?.passed ? '#3B82F6' : '#EF4444'
+                    }}>
+                      {(evalResult?.overall_score ?? 0) >= 100
+                        ? 'Congrats, You Cleared the Level!'
+                        : evalResult?.passed
+                          ? 'Great Job!'
+                          : 'Better Luck Next Time!'}
+                    </h2>
+                    <p style={{ color: '#4B5563', fontSize: 15, fontWeight: 600, lineHeight: 1.5, margin: '0 auto 12px', maxWidth: 380 }}>
+                      {(evalResult?.overall_score ?? 0) >= 100
+                        ? 'Congrats, you cleared the level! Results will be updated ASAP.'
+                        : evalResult?.passed
+                          ? 'Well done! You passed this test. Results will be updated ASAP.'
+                          : 'Better luck next time! Keep practicing and don\'t give up — you will master this topology! 💪'}
+                    </p>
                   </>
                 ) : (
                   <>
                     <div style={{ fontSize: 44, marginBottom: 6 }}>📝</div>
-                    <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Assesment Feedback</h2>
+                    <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 16 }}>Assessment Feedback</h2>
                     <p style={{ fontSize: 13, fontWeight: 600, color: '#6B7280', marginBottom: 8 }}>How was this Assessment?</p>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 20 }}>
                       {[1, 2, 3, 4, 5].map(n => (
@@ -655,10 +696,23 @@ export default function LabPage() {
             ) : (
               /* GRADING RESULT & HIDDEN TEST CASES */
               <>
-                <div style={{ fontSize: 56, marginBottom: 6 }}>{evalResult.passed ? '🎉' : '😞'}</div>
-                <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 6 }}>
-                  {evalResult.passed ? 'Congratulations!' : 'Evaluation Results'}
+                <div style={{ fontSize: 56, marginBottom: 6 }}>
+                  {(evalResult?.overall_score ?? 0) >= 100 ? '🏆' : evalResult?.passed ? '🎉' : '💪'}
+                </div>
+                <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 4 }}>
+                  {(evalResult?.overall_score ?? 0) >= 100
+                    ? 'Congrats, You Cleared the Level!'
+                    : evalResult?.passed
+                      ? 'Congratulations! You Passed!'
+                      : 'Better Luck Next Time!'}
                 </h2>
+                <p style={{ fontSize: 13, color: '#64748B', fontWeight: 600, marginBottom: 12 }}>
+                  {(evalResult?.overall_score ?? 0) >= 100
+                    ? 'Congrats, you cleared the level! Results will be updated ASAP.'
+                    : evalResult?.passed
+                      ? 'Results will be updated ASAP.'
+                      : 'Better luck next time! Review your configuration and try again.'}
+                </p>
 
                 <div style={{
                   width: 84, height: 84, borderRadius: '50%', margin: '14px auto',

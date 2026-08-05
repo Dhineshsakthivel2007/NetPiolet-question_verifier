@@ -92,6 +92,24 @@ export default function CliTerminal({ deviceId }) {
         updateRunningConfig(deviceId, { router_sections: rs });
         break;
       }
+
+      case 'ensure_dhcp_pool': {
+        const rs = { ...(device.running_config?.router_sections || {}) };
+        const secName = `ip dhcp pool ${delta.pool}`;
+        if (!rs[secName]) rs[secName] = [];
+        updateRunningConfig(deviceId, { router_sections: rs });
+        break;
+      }
+
+      case 'dhcp_pool_command': {
+        const rs = { ...(device.running_config?.router_sections || {}) };
+        const secName = `ip dhcp pool ${delta.pool}`;
+        const cmds = [...(rs[secName] || [])];
+        if (!cmds.includes(delta.command)) cmds.push(delta.command);
+        rs[secName] = cmds;
+        updateRunningConfig(deviceId, { router_sections: rs });
+        break;
+      }
     }
   }, [deviceId, getDevice, updateDeviceConfig, updateDeviceHostname, updateInterface, addVlan, updateRunningConfig]);
 
@@ -116,7 +134,7 @@ export default function CliTerminal({ deviceId }) {
         cyan: '#94E2D5',
         white: '#BAC2DE',
       },
-      scrollback: 1000,
+      scrollback: 5000,
       convertEol: true,
     });
 
@@ -186,16 +204,51 @@ export default function CliTerminal({ deviceId }) {
         ctxRef.current = result.context;
       }
 
-      if (result.output) {
-        xterm.writeln(result.output);
-      }
-      if (result.configDelta) {
-        applyDelta(result.configDelta);
-        const updated = getDevice(deviceId);
-        if (ctxRef.current) ctxRef.current.device = updated;
-      }
+      const isPingCmd = line.trim().toLowerCase().startsWith('ping');
 
-      writePrompt();
+      if (isPingCmd && result.output) {
+        const outputLines = result.output.split('\n');
+        let index = 0;
+
+        const streamNextLine = () => {
+          if (index < outputLines.length) {
+            const currentLine = outputLines[index];
+            xterm.writeln(currentLine);
+            index++;
+
+            // Calculate ICMP latency gap for realistic ping response delays
+            let delayMs = 120;
+            if (currentLine.includes('Reply from')) {
+              delayMs = 550; // 550ms ICMP reply gap
+            } else if (currentLine.includes('Request timed out') || currentLine.includes('unreachable')) {
+              delayMs = 700; // 700ms ICMP timeout gap
+            } else if (currentLine.startsWith('Pinging')) {
+              delayMs = 350; // ARP request delay
+            }
+
+            setTimeout(streamNextLine, delayMs);
+          } else {
+            if (result.configDelta) {
+              applyDelta(result.configDelta);
+              const updated = getDevice(deviceId);
+              if (ctxRef.current) ctxRef.current.device = updated;
+            }
+            writePrompt();
+          }
+        };
+
+        streamNextLine();
+      } else {
+        if (result.output) {
+          xterm.writeln(result.output);
+        }
+        if (result.configDelta) {
+          applyDelta(result.configDelta);
+          const updated = getDevice(deviceId);
+          if (ctxRef.current) ctxRef.current.device = updated;
+        }
+        writePrompt();
+      }
     }
 
     // Write initial prompt
@@ -313,9 +366,10 @@ export default function CliTerminal({ deviceId }) {
       ref={termRef}
       style={{
         height: '100%',
+        width: '100%',
         minHeight: 200,
         borderRadius: 8,
-        overflow: 'hidden',
+        overflow: 'auto',
       }}
     />
   );

@@ -536,6 +536,8 @@ def get_all_test_sessions(db: Session = Depends(get_db), user: User = Depends(ge
             "is_completed": s.is_completed,
             "proctor_locked": s.proctor_locked,
             "warning_count": s.warning_count,
+            "dual_login_flag": getattr(s, 'dual_login_flag', False) or False,
+            "completion_reason": getattr(s, 'completion_reason', "") or "",
             "best_score": best_score,
             "passed": passed,
             "has_evaluation": eval_rec is not None or s.is_completed or s.best_score is not None,
