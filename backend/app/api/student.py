@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import random
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -22,6 +22,43 @@ from app.schemas import StudentQuestionResponse, StudentTestResultResponse, Test
 from app.services import evaluation_service
 
 router = APIRouter(prefix="/student", tags=["Student Portal"])
+
+
+def _calculate_session_expiry(user: User | None, question: Question, now: datetime) -> datetime:
+    """Calculate expiration time based on assigned slot timing (e.g. '09:00-11:00' = 120 mins) and question time limit."""
+    slot_expiry = None
+    slot_duration_mins = None
+
+    if user and getattr(user, 'session_slot', None) and user.session_slot.strip():
+        match = re.search(r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', user.session_slot.strip())
+        if match:
+            try:
+                start_t = datetime.strptime(match.group(1), "%H:%M").time()
+                end_t = datetime.strptime(match.group(2), "%H:%M").time()
+
+                start_dt = datetime.combine(now.date(), start_t)
+                end_dt = datetime.combine(now.date(), end_t)
+                if end_dt <= start_dt:
+                    end_dt += timedelta(days=1)
+
+                slot_duration_mins = int((end_dt - start_dt).total_seconds() / 60)
+                slot_expiry = end_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+
+    if question.time_limit_minutes and question.time_limit_minutes > 0:
+        limit_mins = question.time_limit_minutes
+    elif slot_duration_mins and slot_duration_mins > 0:
+        limit_mins = slot_duration_mins
+    else:
+        limit_mins = 60
+
+    calc_expiry = now + timedelta(minutes=limit_mins)
+
+    if slot_expiry and slot_expiry > now:
+        return max(calc_expiry, slot_expiry)
+
+    return calc_expiry
 
 
 def _require_student(user: User = Depends(get_current_user)) -> User:
@@ -88,8 +125,7 @@ def start_test(question_id: str, db: Session = Depends(get_db), user: User = Dep
         return existing
 
     now = datetime.now(timezone.utc)
-    limit_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 60
-    expires = now + timedelta(minutes=limit_mins)
+    expires = _calculate_session_expiry(user, question, now)
 
     session = TestSession(
         student_id=user.id,

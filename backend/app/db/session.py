@@ -53,6 +53,25 @@ def create_tables():
             if "attendance" not in cols:
                 conn.exec_driver_sql("ALTER TABLE users ADD COLUMN attendance VARCHAR(20) DEFAULT 'Absent'")
             # Fix existing NULL attendance rows
-            conn.exec_driver_sql("UPDATE users SET attendance = 'Absent' WHERE attendance IS NULL AND role = 'student'")
-            conn.exec_driver_sql("UPDATE users SET attendance = 'Present' WHERE role IN ('admin', 'professor')")
             conn.commit()
+
+    # Seed initial default admin user if no admin exists
+    db = SessionLocal()
+    try:
+        from app.models.user import User, UserRole
+        from app.services.auth_service import hash_password
+        admin_user = db.query(User).filter(User.role == UserRole.admin).first()
+        if not admin_user:
+            default_admin = User(
+                username="admin",
+                email="admin@netpiolet.local",
+                hashed_password=hash_password("admin123"),
+                role=UserRole.admin,
+                is_active=True,
+            )
+            db.add(default_admin)
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
