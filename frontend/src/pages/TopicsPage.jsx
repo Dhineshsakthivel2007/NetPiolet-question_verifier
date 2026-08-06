@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaFolder } from 'react-icons/fa';
 
 export default function TopicsPage() {
   const [topics, setTopics] = useState([]);
@@ -34,10 +35,17 @@ export default function TopicsPage() {
     finally { setLoading(false); }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Delete this topic and all its questions?')) return;
+  const [deleteTopicModal, setDeleteTopicModal] = useState(null); // { id, name }
+
+  const handleDelete = (id, topicName) => {
+    setDeleteTopicModal({ id, name: topicName || 'this topic' });
+  };
+
+  const confirmDeleteTopic = async () => {
+    if (!deleteTopicModal) return;
     try {
-      await api.deleteTopic(id);
+      await api.deleteTopic(deleteTopicModal.id);
+      setDeleteTopicModal(null);
       await load();
     } catch (err) {
       alert('Failed to delete topic: ' + err.message);
@@ -79,7 +87,7 @@ export default function TopicsPage() {
 
       {topics.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 48 }}>
-          <p style={{ fontSize: 48, marginBottom: 12 }}>📁</p>
+          <p style={{ marginBottom: 12 }}><FaFolder size={44} style={{ color: '#7C5CFC' }} /></p>
           <h3>No topics yet{selectedLevel ? ` in ${selectedLevel.name}` : ''}</h3>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 20 }}>Create your first topic to get started</p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -147,6 +155,34 @@ export default function TopicsPage() {
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Topic Confirmation Card Modal */}
+      {deleteTopicModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+        }} onClick={() => setDeleteTopicModal(null)}>
+          <div className="card" style={{
+            maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
+            boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 24 }}>🗑️</span>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>Delete Topic</h3>
+            </div>
+            <p style={{ color: '#475569', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+              Are you sure you want to delete topic <strong>"{deleteTopicModal.name}"</strong> and all its questions?<br /><br />
+              This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setDeleteTopicModal(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDeleteTopic} style={{ background: '#EF4444', color: 'white' }}>Delete Topic</button>
+            </div>
           </div>
         </div>
       )}

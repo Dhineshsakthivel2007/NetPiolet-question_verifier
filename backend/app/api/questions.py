@@ -25,7 +25,10 @@ def list_questions(
 
 @router.post("", response_model=QuestionResponse, status_code=201)
 def create_question(data: QuestionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return question_service.create_question(db, data)
+    q = question_service.create_question(db, data)
+    from app.services.audit_service import log_activity
+    log_activity(db, "QUESTION_CREATED", user.username, role=str(user.role), user_id=user.id, details=f"Created question '{q.title}' (Week {q.week_number})")
+    return q
 
 
 @router.get("/{question_id}", response_model=QuestionResponse)
@@ -77,4 +80,8 @@ def update_plan(question_id: str, body: PlanUpdateRequest, db: Session = Depends
 
 @router.delete("/{question_id}", status_code=204)
 def delete_question(question_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = question_service.get_question(db, question_id)
+    title = q.title if q else question_id
     if not question_service.delete_question(db, question_id): raise HTTPException(404, "Question not found")
+    from app.services.audit_service import log_activity
+    log_activity(db, "QUESTION_DELETED", user.username, role=str(user.role), user_id=user.id, details=f"Deleted question '{title}' (ID: {question_id})")

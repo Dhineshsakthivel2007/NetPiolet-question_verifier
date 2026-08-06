@@ -34,10 +34,22 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def create_tables():
-    """Create all tables (for development without Alembic)."""
+    """Create all tables (for development without Alembic) and apply column migrations."""
     from app.models.base import Base
     import app.models  # noqa: F401 — ensure all models are imported
     Base.metadata.create_all(bind=engine)
+
+    # Safe auto-migration for newly added columns in SQLite
+    with engine.connect() as conn:
+        try:
+            from sqlalchemy import text
+            res = conn.execute(text("PRAGMA table_info(test_sessions)")).fetchall()
+            cols = [r[1] for r in res]
+            if "last_violation" not in cols:
+                conn.execute(text("ALTER TABLE test_sessions ADD COLUMN last_violation VARCHAR(255)"))
+                conn.commit()
+        except Exception as e:
+            print("Auto-migration notice:", e)
 
     # Ensure missing columns are added for SQLite databases
     if settings.database_url.startswith("sqlite"):

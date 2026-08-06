@@ -51,32 +51,30 @@ const CableEdge = memo(({
   let labelY = (sy + ty) / 2;
 
   if (totalParallel > 1 && edgeIndex !== -1) {
-    // Calculate perpendicular offset vector for curved parallel cables
+    // Calculate perpendicular offset vector for straight parallel cables
     const dx = targetX - sourceX;
     const dy = ty - sy;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const nx = -dy / len;
     const ny = dx / len;
 
-    // Offset multiplier: centered around 0 (e.g. -1, 0, 1)
+    // Parallel offset: shift start and end points in parallel direction (straight lines!)
     const offsetIndex = edgeIndex - (totalParallel - 1) / 2;
-    const offsetDistance = offsetIndex * 36; // 36px spacing between parallel cables
+    const offsetDistance = offsetIndex * 14;
 
-    // Midpoint control point for quadratic bezier curve
-    const midX = (sourceX + targetX) / 2 + nx * offsetDistance;
-    const midY = (sy + ty) / 2 + ny * offsetDistance;
+    const sx = sourceX + nx * offsetDistance;
+    const s_y = sy + ny * offsetDistance;
+    const tx = targetX + nx * offsetDistance;
+    const t_y = ty + ny * offsetDistance;
 
-    edgePath = `M ${sourceX} ${sy} Q ${midX} ${midY} ${targetX} ${ty}`;
-    labelX = (sourceX + 2 * midX + targetX) / 4;
-    labelY = (sy + 2 * midY + ty) / 4;
+    edgePath = `M ${sx} ${s_y} L ${tx} ${t_y}`;
+    labelX = (sx + tx) / 2;
+    labelY = (s_y + t_y) / 2;
   } else {
-    const [path, lx, ly] = getBezierPath({
-      sourceX, sourceY: sy, targetX, targetY: ty,
-      sourcePosition, targetPosition,
-    });
-    edgePath = path;
-    labelX = lx;
-    labelY = ly;
+    // 100% straight line from source to target device!
+    edgePath = `M ${sourceX} ${sy} L ${targetX} ${ty}`;
+    labelX = (sourceX + targetX) / 2;
+    labelY = (sy + ty) / 2;
   }
 
   const sourcePort = data?.sourcePort || '';
@@ -228,7 +226,12 @@ const CableEdge = memo(({
           }}
           title={linkEval.reason}
         >
-          <span style={{ fontSize: 6.5 }}>{linkEval.isUp ? '🟢' : linkEval.status === 'mismatch' ? '⚠️' : '🔴'}</span>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: linkEval.isUp ? '#10B981' : linkEval.status === 'mismatch' ? '#F97316' : '#EF4444',
+            boxShadow: linkEval.isUp ? '0 0 3px #10B981' : 'none',
+            display: 'inline-block', flexShrink: 0
+          }} />
           <span>{cs.shortLabel}</span>
           <span style={{ fontSize: 5.5, opacity: 0.8 }}>▼</span>
         </div>

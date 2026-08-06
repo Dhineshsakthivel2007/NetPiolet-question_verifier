@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api.js';
+import { FaTrash } from 'react-icons/fa';
 import {
   FiUsers, FiUserCheck, FiUserX, FiClock, FiSearch,
   FiFilter, FiGrid, FiList, FiPlus, FiUploadCloud, FiDownload,
@@ -150,16 +151,24 @@ export default function AdminPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const [adminModalState, setAdminModalState] = useState(null);
+  // { title, message, isDanger, onConfirm }
+
+  const handleBulkDelete = () => {
     if (selectedUserIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedUserIds.length} selected user(s) and all their data? This action cannot be undone!`)) return;
-    try {
-      await api.bulkDeleteUsers(selectedUserIds);
-      setSelectedUserIds([]);
-      load();
-    } catch (err) {
-      alert(`Bulk delete failed: ${err.message}`);
-    }
+    setAdminModalState({
+      title: 'Bulk Delete Users',
+      message: `Are you sure you want to delete ${selectedUserIds.length} selected user(s) and all their test data? This action cannot be undone.`,
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await api.bulkDeleteUsers(selectedUserIds);
+          setSelectedUserIds([]);
+          load();
+          setAdminModalState(null);
+        } catch (err) { alert(`Bulk delete failed: ${err.message}`); }
+      }
+    });
   };
 
   const handleApprove = async (id, active) => {
@@ -172,14 +181,19 @@ export default function AdminPage() {
     load();
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
-    try {
-      await api.deleteUser(id);
-      load();
-    } catch (err) {
-      alert(`Failed to delete user: ${err.message}`);
-    }
+  const handleDelete = (id, username) => {
+    setAdminModalState({
+      title: 'Delete User Account',
+      message: `Are you sure you want to delete user "${username || 'this user'}"? All student evaluations and session data will be permanently removed.`,
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await api.deleteUser(id);
+          load();
+          setAdminModalState(null);
+        } catch (err) { alert(`Failed to delete user: ${err.message}`); }
+      }
+    });
   };
 
   const handleAddUser = async (e) => {
@@ -199,8 +213,18 @@ export default function AdminPage() {
     if (sessionSlot) {
       const slotInfo = getSlotStatus(sessionSlot);
       if (slotInfo.status !== 'active') {
-        const confirmMsg = `⚠️ WARNING: ${studentName}'s assigned slot (${sessionSlot}) is currently ${slotInfo.label}.\n\nAre you sure you want to mark this student as '${attendanceStatus}' outside of their active slot window?`;
-        if (!confirm(confirmMsg)) return;
+        setAdminModalState({
+          title: 'Confirm Attendance Window',
+          message: `⚠️ WARNING: ${studentName}'s assigned slot (${sessionSlot}) is currently ${slotInfo.label}. Are you sure you want to mark this student as '${attendanceStatus}' outside of their active slot window?`,
+          onConfirm: async () => {
+            try {
+              await api.updateUserAttendance(userId, attendanceStatus);
+              load();
+              setAdminModalState(null);
+            } catch (err) { alert(`Failed to update attendance: ${err.message}`); }
+          }
+        });
+        return;
       }
     }
     try {
@@ -211,17 +235,20 @@ export default function AdminPage() {
     }
   };
 
-  const handleBulkAttendance = async (status) => {
+  const handleBulkAttendance = (status) => {
     const slotArg = selectedSlotFilter === 'All Slots' ? null : selectedSlotFilter;
     const targetLabel = slotArg ? `slot "${slotArg}"` : "all active students";
-    if (!confirm(`Are you sure you want to mark ALL students in ${targetLabel} as '${status}'?`)) return;
-
-    try {
-      await api.bulkUpdateAttendance({ session_slot: slotArg, attendance: status });
-      load();
-    } catch (err) {
-      alert(`Failed to bulk update: ${err.message}`);
-    }
+    setAdminModalState({
+      title: 'Bulk Mark Attendance',
+      message: `Are you sure you want to mark ALL students in ${targetLabel} as '${status}'?`,
+      onConfirm: async () => {
+        try {
+          await api.bulkUpdateAttendance(slotArg, status);
+          load();
+          setAdminModalState(null);
+        } catch (err) { alert(`Failed to bulk update: ${err.message}`); }
+      }
+    });
   };
 
   /* ─── CSV & Excel Bulk Import Handlers ─── */
@@ -1187,7 +1214,7 @@ export default function AdminPage() {
                           ) : (
                             <button className="btn btn-sm btn-secondary" onClick={() => handleApprove(u.id, false)} style={{ fontWeight: 700 }}>Deactivate</button>
                           )}
-                          <button className="btn btn-sm btn-danger" onClick={() => handleDelete(u.id)}>🗑</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => handleDelete(u.id, u.username)} title="Delete User"><FaTrash size={12} /></button>
                         </div>
                       </td>
                     </tr>
@@ -1197,6 +1224,39 @@ export default function AdminPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Admin Card Action Modal */}
+      {adminModalState && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+        }} onClick={() => setAdminModalState(null)}>
+          <div className="card" style={{
+            maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
+            boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 24 }}>⚙️</span>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>{adminModalState.title}</h3>
+            </div>
+            <p style={{ color: '#475569', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+              {adminModalState.message}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setAdminModalState(null)}>Cancel</button>
+              <button
+                className={`btn ${adminModalState.isDanger ? 'btn-danger' : 'btn-primary'}`}
+                onClick={adminModalState.onConfirm}
+                style={adminModalState.isDanger ? { background: '#EF4444', color: 'white' } : {}}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

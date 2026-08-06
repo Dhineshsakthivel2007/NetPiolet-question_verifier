@@ -13,6 +13,7 @@ import ResultsPage from './pages/ResultsPage.jsx';
 import ResultDetailPage from './pages/ResultDetailPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
 import SessionsPage from './pages/SessionsPage.jsx';
+import AuditLogsPage from './pages/AuditLogsPage.jsx';
 import StudentTestPage from './pages/StudentTestPage.jsx';
 import StudentResultsPage from './pages/StudentResultsPage.jsx';
 import LabPage from './pages/LabPage.jsx';
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="admin" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><AdminPage /></ProtectedRoute>} />
           <Route path="users" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><AdminPage /></ProtectedRoute>} />
+          <Route path="logs" element={<ProtectedRoute allowedRoles={['admin', 'professor']}><AuditLogsPage /></ProtectedRoute>} />
         </Route>
 
         {/* Student Routes */}

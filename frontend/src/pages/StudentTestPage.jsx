@@ -31,7 +31,41 @@ export default function StudentTestPage() {
   const fileInputRef = useRef(null);
   const timerRef = useRef(null);
 
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const keyLower = (e.key || '').toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && (keyLower === 'c' || keyLower === 'v' || keyLower === 'x')) {
+        e.preventDefault(); e.stopPropagation();
+        alert('⚠️ WARNING: Copy/Paste shortcuts are disabled during the examination!');
+        return;
+      }
+      if (
+        e.key === 'PrintScreen' || (e.altKey && e.key === 'PrintScreen') ||
+        ((e.ctrlKey || e.metaKey) && keyLower === 'p') ||
+        (e.metaKey && e.shiftKey && (keyLower === '3' || keyLower === '4' || keyLower === '5'))
+      ) {
+        e.preventDefault(); e.stopPropagation();
+        alert('⚠️ WARNING: Screenshot and Print shortcuts are disabled!');
+        return;
+      }
+    };
+    const blockCopy = (e) => { e.preventDefault(); };
+    const blockContext = (e) => { e.preventDefault(); };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('copy', blockCopy, true);
+    window.addEventListener('paste', blockCopy, true);
+    window.addEventListener('cut', blockCopy, true);
+    window.addEventListener('contextmenu', blockContext, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('copy', blockCopy, true);
+      window.removeEventListener('paste', blockCopy, true);
+      window.removeEventListener('cut', blockCopy, true);
+      window.removeEventListener('contextmenu', blockContext, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (!session?.expires_at || session.is_completed) return;

@@ -32,11 +32,14 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("uploads")
     reports_dir: Path = Path("reports")
 
+    # Base Directory
+    base_dir: Path = Path(__file__).resolve().parent.parent
+
     # pka2xml Binary
-    pka2xml_binary_path: str = "/home/hinata/newnetwork/pka2xml/pka2xml"
+    pka2xml_binary_path: str = str(Path(__file__).resolve().parent.parent.parent / "pka2xml" / "pka2xml")
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = ["*"]
 
     # Google OAuth
     google_client_id: str = ""

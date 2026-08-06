@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaQuestionCircle, FaTrash } from 'react-icons/fa';
 
 export default function QuestionsPage() {
   const [questions, setQuestions] = useState([]);
@@ -46,9 +47,22 @@ export default function QuestionsPage() {
     finally { setLoading(false); }
   };
 
-  const handleLevelChange = (levelId) => {
-    setFilterLevel(levelId);
-    setFilterTopic(''); // Reset topic filter when level changes
+  const [deleteModal, setDeleteModal] = useState(null); // { id, title }
+
+  const handleDeleteQuestion = (e, id, title) => {
+    e.stopPropagation();
+    setDeleteModal({ id, title });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteModal) return;
+    try {
+      await api.deleteQuestion(deleteModal.id);
+      load();
+      setDeleteModal(null);
+    } catch (err) {
+      alert(err.message || "Failed to delete question");
+    }
   };
 
   return (
@@ -72,13 +86,13 @@ export default function QuestionsPage() {
 
       {questions.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 48 }}>
-          <p style={{ fontSize: 48, marginBottom: 12 }}>❓</p>
+          <p style={{ marginBottom: 12 }}><FaQuestionCircle size={44} style={{ color: '#7C5CFC' }} /></p>
           <h3>No questions yet</h3>
           <p style={{ color: 'var(--text-secondary)' }}>Create your first weekly question</p>
         </div>
       ) : (
         <table className="data-table">
-          <thead><tr><th>Week</th><th>Title</th><th>Level</th><th>Topic</th><th>Plan</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Week</th><th>Title</th><th>Level</th><th>Topic</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {questions.map(q => (
               <tr key={q.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/questions/${q.id}`)}>
@@ -94,7 +108,12 @@ export default function QuestionsPage() {
                 <td><span className="badge badge-topic">{topics.find(t => t.id === q.topic_id)?.name || '—'}</span></td>
                 <td>{q.evaluation_plan ? <span className="badge badge-pass">Ready</span> : <span className="badge badge-pending">No Plan</span>}</td>
                 <td>{q.is_active ? <span className="badge badge-pass">Active</span> : <span className="badge badge-fail">Inactive</span>}</td>
-                <td><button className="btn btn-sm btn-secondary" onClick={e => { e.stopPropagation(); navigate(`/questions/${q.id}`); }}>View →</button></td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button className="btn btn-sm btn-secondary" onClick={e => { e.stopPropagation(); navigate(`/questions/${q.id}`); }} style={{ marginRight: 6 }}>View →</button>
+                  <button className="btn btn-sm btn-danger" onClick={e => handleDeleteQuestion(e, q.id, q.title)} style={{ background: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <FaTrash size={12} /> Delete
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -161,6 +180,34 @@ export default function QuestionsPage() {
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Question Confirmation Card Modal */}
+      {deleteModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+        }} onClick={() => setDeleteModal(null)}>
+          <div className="card" style={{
+            maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
+            boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <FaTrash size={22} style={{ color: '#EF4444' }} />
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>Delete Question</h3>
+            </div>
+            <p style={{ color: '#475569', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+              Are you sure you want to delete question <strong>"{deleteModal.title}"</strong>?<br /><br />
+              This will permanently delete the question and all associated test sessions and evaluation reports.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setDeleteModal(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDelete} style={{ background: '#EF4444', color: 'white' }}>Delete Question</button>
+            </div>
           </div>
         </div>
       )}

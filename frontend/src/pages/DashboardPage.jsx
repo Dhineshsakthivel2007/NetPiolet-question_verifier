@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
-import { FaHandSparkles } from "react-icons/fa6";
-import { MdDashboard } from "react-icons/md";
-import { MdRocketLaunch, MdFactCheck } from "react-icons/md";
+import { MdDashboard, MdRocketLaunch, MdFactCheck } from "react-icons/md";
 import { FaFolderOpen, FaQuestionCircle } from "react-icons/fa";
 import { FaClipboardCheck } from "react-icons/fa6";
 import { TbTargetArrow } from "react-icons/tb";
@@ -33,108 +31,6 @@ const samplePlan = `{
     }
   ]
 }`;
-
-function PerformanceLineChart({ data }) {
-  const [hoveredIdx, setHoveredIdx] = useState(null);
-  const width = 450;
-  const height = 160;
-  const padding = 28;
-
-  if (!data || data.length === 0) return <p style={{ color: '#94A3B8', fontSize: 13 }}>No evaluation data available</p>;
-
-  const points = data.map((d, i) => {
-    const x = padding + (i * (width - padding * 2)) / Math.max(1, data.length - 1);
-    const y = height - padding - (d.score / 100) * (height - padding * 2);
-    return { x, y, ...d };
-  });
-
-  const pathD = points.reduce((acc, p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`), '');
-  const areaD = points.length > 0 ? `${pathD} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z` : '';
-
-  return (
-    <div style={{ position: 'relative', width: '100%' }}>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
-        <defs>
-          <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#7C5CFC" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="#7C5CFC" stopOpacity="0.0" />
-          </linearGradient>
-        </defs>
-        {[0, 25, 50, 75, 100].map(val => {
-          const y = height - padding - (val / 100) * (height - padding * 2);
-          return (
-            <g key={val}>
-              <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="#E2E8F0" strokeDasharray="3 3" />
-              <text x={6} y={y + 3} fontSize="9" fill="#94A3B8" fontWeight="600">{val}%</text>
-            </g>
-          );
-        })}
-        <path d={areaD} fill="url(#scoreGrad)" />
-        <path d={pathD} fill="none" stroke="#7C5CFC" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        {points.map((p, i) => (
-          <g key={i} onMouseEnter={() => setHoveredIdx(i)} onMouseLeave={() => setHoveredIdx(null)} style={{ cursor: 'pointer' }}>
-            <circle cx={p.x} cy={p.y} r={hoveredIdx === i ? 7 : 5} fill={p.passed ? '#10B981' : '#EF4444'} stroke="white" strokeWidth="2" />
-          </g>
-        ))}
-      </svg>
-      {hoveredIdx !== null && (
-        <div style={{
-          position: 'absolute', top: -30, left: `${(hoveredIdx / Math.max(1, data.length - 1)) * 80 + 10}%`,
-          background: '#1E293B', color: 'white', padding: '4px 10px', borderRadius: 6,
-          fontSize: 11, fontWeight: 700, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', pointerEvents: 'none',
-        }}>
-          {data[hoveredIdx].label}: {data[hoveredIdx].score}% ({data[hoveredIdx].passed ? 'PASS' : 'FAIL'})
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PassFailDonutChart({ passed, failed, total }) {
-  const passPct = total > 0 ? Math.round((passed / total) * 100) : 0;
-  const radius = 48;
-  const circum = 2 * Math.PI * radius;
-  const strokeDashoffset = circum - (passPct / 100) * circum;
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: 16 }}>
-      <div style={{ position: 'relative', width: 120, height: 120 }}>
-        <svg width="120" height="120" viewBox="0 0 120 120">
-          <circle cx="60" cy="60" r={radius} fill="none" stroke="#EF4444" strokeWidth="12" />
-          <circle
-            cx="60" cy="60" r={radius} fill="none" stroke="#10B981" strokeWidth="12"
-            strokeDasharray={circum}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            transform="rotate(-90 60 60)"
-            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
-          />
-        </svg>
-        <div style={{
-          position: 'absolute', inset: 0,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <span style={{ fontSize: 20, fontWeight: 900, color: '#1E293B' }}>{passPct}%</span>
-          <span style={{ fontSize: 9, fontWeight: 800, color: '#64748B', textTransform: 'uppercase' }}>Pass Rate</span>
-        </div>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: '#1E293B' }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: '#10B981' }} />
-          <span>Passed: {passed}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: '#1E293B' }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: '#EF4444' }} />
-          <span>Failed: {failed}</span>
-        </div>
-        <div style={{ fontSize: 11, color: '#64748B', fontWeight: 600 }}>
-          Total Submissions: {total}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({ topics: 0, questions: 0, evaluations: 0, passed: 0 });
@@ -175,19 +71,12 @@ export default function DashboardPage() {
         evaluations: finalEvals.length,
         passed: finalEvals.filter(e => e.passed).length,
       });
-      setRecentEvals(finalEvals.slice(0, 10));
+      setRecentEvals(finalEvals.slice(0, 5));
       setHealth(h);
     });
   }, []);
 
   const passRate = stats.evaluations > 0 ? Math.round((stats.passed / stats.evaluations) * 100) : 0;
-  const failCount = Math.max(0, stats.evaluations - stats.passed);
-
-  const trendData = recentEvals.slice().reverse().map((e, idx) => ({
-    label: e.student_name ? e.student_name.slice(0, 8) : `Ex ${idx+1}`,
-    score: Math.round(e.overall_score || 0),
-    passed: e.passed,
-  }));
 
   return (
     <>
@@ -213,24 +102,6 @@ export default function DashboardPage() {
             <div className="stat-label">{s.label}</div>
           </div>
         ))}
-      </div>
-
-      {/* Analytics Graphs Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, marginBottom: 24 }}>
-        <div className="card" style={{ padding: 20 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>📈</span>
-            <span>Performance Score Trend</span>
-          </h3>
-          <PerformanceLineChart data={trendData} />
-        </div>
-        <div className="card" style={{ padding: 20 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#1E293B', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>📊</span>
-            <span>Pass vs Fail Breakdown</span>
-          </h3>
-          <PassFailDonutChart passed={stats.passed} failed={failCount} total={stats.evaluations} />
-        </div>
       </div>
 
       {/* Two Column Layout */}

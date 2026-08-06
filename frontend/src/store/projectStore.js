@@ -669,19 +669,22 @@ const useProjectStore = create((set, get) => ({
         position: n.position || { x: 0, y: 0 },
         data: { ...n, id: n.id },
       }));
-      const edges = (state.edges || []).map(e => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle || '',
-        targetHandle: e.targetHandle || '',
-        type: 'cable',
-        data: {
-          cableType: e.cableType || e.data?.cableType || 'copper-straight',
-          sourcePort: e.sourcePort || e.data?.sourcePort || '',
-          targetPort: e.targetPort || e.data?.targetPort || '',
-        },
-      }));
+      const validNodeIds = new Set(nodes.map(n => n.id));
+      const edges = (state.edges || [])
+        .filter(e => e && e.source && e.target && e.source !== e.target && validNodeIds.has(e.source) && validNodeIds.has(e.target))
+        .map(e => ({
+          id: e.id || `cable-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle || 'src-full',
+          targetHandle: e.targetHandle || 'tgt-full',
+          type: 'cable',
+          data: {
+            cableType: e.cableType || e.data?.cableType || 'copper-straight',
+            sourcePort: e.sourcePort || e.data?.sourcePort || '',
+            targetPort: e.targetPort || e.data?.targetPort || '',
+          },
+        }));
 
       set({
         projectId,

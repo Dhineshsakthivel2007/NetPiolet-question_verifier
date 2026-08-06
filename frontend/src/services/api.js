@@ -126,6 +126,12 @@ export const api = {
 
   // Health
   health: () => request('/health'),
+
+  // Audit Logs
+  getAuditLogs: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([,v]) => v != null)).toString();
+    return request(`/audit-logs${qs ? '?' + qs : ''}`);
+  },
 };
 
 export default api;

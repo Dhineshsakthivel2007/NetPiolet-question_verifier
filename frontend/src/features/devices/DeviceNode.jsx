@@ -1,7 +1,8 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { getDeviceDef } from './DeviceRegistry.js';
 import useProjectStore from '../../store/projectStore.js';
+import { FaPlug, FaLock } from 'react-icons/fa';
 
 /* ═══════════════════════════════════════════════════════════════
    Full Surface Handle Helper:
@@ -154,8 +155,6 @@ const DeviceNode = memo(({ id, data, selected }) => {
   const openTerminal = useProjectStore(s => s.openTerminal);
   const reconnectingCable = useProjectStore(s => s.reconnectingCable);
   const reconnectEdgeToNode = useProjectStore(s => s.reconnectEdgeToNode);
-  const edges = useProjectStore(s => s.edges);
-
   const getDeviceCapacity = (type) => {
     if (type === 'switch') return 24;
     if (type === 'router') return 4;
@@ -163,11 +162,24 @@ const DeviceNode = memo(({ id, data, selected }) => {
     return 4;
   };
 
-  const nodes = useProjectStore(s => s.nodes);
-  const nodeIds = new Set((nodes || []).map(n => n.id));
-  const connectedCables = (edges || []).filter(e =>
-    e.source && e.target && e.source !== e.target && nodeIds.has(e.source) && nodeIds.has(e.target) && (e.source === id || e.target === id)
-  ).length;
+  const connectedCables = useProjectStore(
+    useCallback(
+      (state) => {
+        const nodeIds = new Set((state.nodes || []).map(n => n.id));
+        return (state.edges || []).filter(e =>
+          e &&
+          e.source &&
+          e.target &&
+          e.source !== e.target &&
+          nodeIds.has(e.source) &&
+          nodeIds.has(e.target) &&
+          (e.source === id || e.target === id)
+        ).length;
+      },
+      [id]
+    )
+  );
+
   const maxPorts = getDeviceCapacity(data.type);
   const isFull = connectedCables >= maxPorts;
 
@@ -244,11 +256,22 @@ const DeviceNode = memo(({ id, data, selected }) => {
         color: isFull ? '#EF4444' : '#0284C7',
         background: isFull ? '#FEE2E2' : '#F0F9FF',
         border: `1px solid ${isFull ? '#FCA5A5' : '#BAE6FD'}`,
-        padding: '0.5px 5px', borderRadius: 100,
+        padding: '1px 6px', borderRadius: 100,
         boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
         whiteSpace: 'nowrap',
+        display: 'inline-flex', alignItems: 'center', gap: 3,
       }}>
-        {isFull ? `🔒 ${maxPorts}/${maxPorts}` : `🔌 ${connectedCables}/${maxPorts}`}
+        {isFull ? (
+          <>
+            <FaLock size={8} style={{ color: '#EF4444' }} />
+            <span>{maxPorts}/{maxPorts}</span>
+          </>
+        ) : (
+          <>
+            <FaPlug size={8} style={{ color: '#0284C7' }} />
+            <span>{connectedCables}/{maxPorts}</span>
+          </>
+        )}
       </div>
     </div>
   );

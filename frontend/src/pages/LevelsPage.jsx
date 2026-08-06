@@ -38,11 +38,18 @@ export default function LevelsPage() {
     finally { setCreating(false); }
   };
 
-  const handleDelete = async (id, name) => {
-    if (!confirm(`Delete "${name}" and all its topics & questions?`)) return;
+  const [deleteLevelModal, setDeleteLevelModal] = useState(null); // { id, name }
+
+  const handleDelete = (id, name) => {
+    setDeleteLevelModal({ id, name });
+  };
+
+  const confirmDeleteLevel = async () => {
+    if (!deleteLevelModal) return;
     try {
-      await api.deleteLevel(id);
-      showToast(`🗑️ "${name}" deleted`);
+      await api.deleteLevel(deleteLevelModal.id);
+      showToast(`"${deleteLevelModal.name}" deleted`);
+      setDeleteLevelModal(null);
       load();
     } catch (err) { alert('Failed to delete: ' + err.message); }
   };
@@ -300,6 +307,33 @@ export default function LevelsPage() {
             background: 'none', border: 'none', color: '#9CA3AF',
             cursor: 'pointer', fontSize: 16, marginLeft: 8,
           }}>×</button>
+        </div>
+      )}
+      {/* Delete Level Confirmation Card Modal */}
+      {deleteLevelModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+        }} onClick={() => setDeleteLevelModal(null)}>
+          <div className="card" style={{
+            maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
+            boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 24 }}>🗑️</span>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>Delete Level</h3>
+            </div>
+            <p style={{ color: '#475569', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+              Are you sure you want to delete level <strong>"{deleteLevelModal.name}"</strong> and all its topics and questions?<br /><br />
+              This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setDeleteLevelModal(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDeleteLevel} style={{ background: '#EF4444', color: 'white' }}>Delete Level</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

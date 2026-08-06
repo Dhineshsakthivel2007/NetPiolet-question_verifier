@@ -217,8 +217,8 @@ function LiveWireOverlay({ anchorNode, cursorPos, cableType }) {
 
   const color = CABLE_COLORS[cableType] || '#7C5CFC';
 
-  // Smooth bezier curve matching React Flow connection line
-  const pathD = `M ${ax} ${ay} C ${ax} ${(ay + cy) / 2}, ${cx} ${(ay + cy) / 2}, ${cx} ${cy}`;
+  // 100% Straight connection line attached to cursor
+  const pathD = `M ${ax} ${ay} L ${cx} ${cy}`;
 
   return (
     <svg style={{
@@ -405,6 +405,7 @@ function CanvasInner() {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}
+        connectionLineType="straight"
         isValidConnection={isValidConnection}
         connectionLineStyle={{ stroke: '#7C5CFC', strokeWidth: 3 }}
         fitView

@@ -110,7 +110,15 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
     selected_user.current_session_token = token
     db.commit()
 
-    return TokenResponse(access_token=token, role=role_str, username=selected_user.username)
+    from app.services.audit_service import log_activity
+    log_activity(db, "USER_LOGIN", selected_user.username, role=str(selected_user.role), user_id=selected_user.id, details=f"Logged in successfully as {selected_user.role}")
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": selected_user.role.value,
+        "username": selected_user.username
+    }
 
 
 import re
@@ -252,15 +260,18 @@ def list_users(db: Session = Depends(get_db), admin: User = Depends(require_admi
 
 
 @router.put("/users/{user_id}/approve")
-def approve_user(user_id: str, data: UserApproveRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    """Approve or deactivate a user (admin only)."""
+def approve_user(user_id: str, data: UserApproveRequest, db: Session = Depends(get_db), admin: User = Depends(require_admin_or_professor)):
+    """Approve/activate or deactivate a user (admin or professor)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if user.id == admin.id:
-        raise HTTPException(status_code=400, detail="Cannot modify your own status")
     user.is_active = data.is_active
     db.commit()
+
+    from app.services.audit_service import log_activity
+    status_str = "ACTIVATED" if data.is_active else "DEACTIVATED"
+    log_activity(db, f"USER_{status_str}", admin.username, role=str(admin.role.value if hasattr(admin.role, 'value') else admin.role), details=f"User account '{user.username}' was {status_str.lower()}")
+
     return {"message": f"User {'approved' if data.is_active else 'deactivated'}", "user_id": user.id}
 
 
@@ -275,6 +286,10 @@ def change_role(user_id: str, data: UserRoleRequest, db: Session = Depends(get_d
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid role. Must be: admin, professor, student")
     db.commit()
+
+    from app.services.audit_service import log_activity
+    log_activity(db, "ROLE_CHANGED", admin.username, role=str(admin.role.value if hasattr(admin.role, 'value') else admin.role), details=f"Changed role of '{user.username}' to '{data.role}'")
+
     return {"message": f"Role changed to {data.role}", "user_id": user.id}
 
 
@@ -286,46 +301,54 @@ def delete_user(user_id: str, db: Session = Depends(get_db), admin: User = Depen
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    uname = user.username
 
     try:
+        from app.models.audit_log import AuditLog
         from app.models.test_session import TestSession
         from app.models.evaluation import Evaluation
         from app.models.report import Report
         from app.models.question import Question
 
-        # 1. Delete reports linked to user's evaluations
+        # 1. Nullify user_id in audit logs so historical log text is kept without foreign key error
+        db.query(AuditLog).filter(AuditLog.user_id == user_id).update({"user_id": None}, synchronize_session=False)
+
+        # 2. Delete reports linked to user's evaluations
         eval_ids = [e.id for e in db.query(Evaluation.id).filter(
             (Evaluation.student_id == user_id) | (Evaluation.created_by == user_id)
         ).all()]
         if eval_ids:
             db.query(Report).filter(Report.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
 
-        # 2. Delete evaluations (clears references to projects.id)
+        # 3. Delete evaluations
         db.query(Evaluation).filter(
             (Evaluation.student_id == user_id) | (Evaluation.created_by == user_id)
         ).delete(synchronize_session=False)
 
-        # 3. Delete test sessions
+        # 4. Delete test sessions
         db.query(TestSession).filter(TestSession.student_id == user_id).delete(synchronize_session=False)
 
-        # 4. Delete projects
+        # 5. Delete projects
         try:
             from app.models.project import Project
             db.query(Project).filter(Project.student_id == user_id).delete(synchronize_session=False)
         except Exception:
             pass
 
-        # 5. Nullify questions created_by
+        # 6. Nullify questions created_by
         db.query(Question).filter(Question.created_by == user_id).update({"created_by": None}, synchronize_session=False)
 
-        # 6. Delete user
+        # 7. Delete user
         db.delete(user)
         db.commit()
+
+        from app.services.audit_service import log_activity
+        log_activity(db, "USER_DELETED", admin.username, role=str(admin.role.value if hasattr(admin.role, 'value') else admin.role), details=f"Deleted user account '{uname}' and associated data")
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
 
-    return {"message": f"User '{user.username}' and all related records deleted"}
+    return {"message": f"User '{uname}' and all related records deleted"}
 
 
 class BulkUsersRequest(BaseModel):
@@ -364,6 +387,7 @@ def bulk_delete_users(data: BulkUsersRequest, db: Session = Depends(get_db), adm
         return {"message": "No valid users selected for deletion"}
 
     deleted_count = 0
+    from app.models.audit_log import AuditLog
     from app.models.test_session import TestSession
     from app.models.evaluation import Evaluation
     from app.models.report import Report
@@ -374,6 +398,7 @@ def bulk_delete_users(data: BulkUsersRequest, db: Session = Depends(get_db), adm
         if not user:
             continue
         try:
+            db.query(AuditLog).filter(AuditLog.user_id == uid).update({"user_id": None}, synchronize_session=False)
             eval_ids = [e.id for e in db.query(Evaluation.id).filter((Evaluation.student_id == uid) | (Evaluation.created_by == uid)).all()]
             if eval_ids:
                 db.query(Report).filter(Report.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
@@ -387,7 +412,8 @@ def bulk_delete_users(data: BulkUsersRequest, db: Session = Depends(get_db), adm
             db.query(Question).filter(Question.created_by == uid).update({"created_by": None}, synchronize_session=False)
             db.delete(user)
             deleted_count += 1
-        except Exception:
+        except Exception as e:
+            print("Error deleting user in bulk:", e)
             db.rollback()
 
     db.commit()

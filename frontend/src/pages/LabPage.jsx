@@ -259,11 +259,12 @@ export default function LabPage() {
 
       setWarningCount((prev) => {
         const next = prev + 1;
+        const targetQId = questionId || useProjectStore.getState().questionId;
+        if (targetQId) {
+          api.reportWarning(targetQId, next, reason).catch((err) => console.error("Report warning failed:", err));
+        }
+
         if (next >= 3) {
-          const targetQId = questionId || useProjectStore.getState().questionId;
-          if (targetQId) {
-            api.reportWarning(targetQId, 3, reason).catch((err) => console.error("Report warning failed:", err));
-          }
           wasLockedByProctorRef.current = true;
           setTerminatedByProctor(true);
           setShowWarningModal(false);
@@ -314,15 +315,66 @@ export default function LabPage() {
         window.location.href = '/student';
         return;
       }
+
+      const keyLower = (e.key || '').toLowerCase();
+
+      // Intercept Copy / Paste / Cut shortcuts
+      if ((e.ctrlKey || e.metaKey) && (keyLower === 'c' || keyLower === 'v' || keyLower === 'x')) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerViolation(`Attempted Copy/Paste shortcut (${e.ctrlKey ? 'Ctrl' : 'Cmd'}+${keyLower.toUpperCase()})`);
+        return;
+      }
+
+      // Intercept PrintScreen and Screenshot shortcuts
+      if (
+        e.key === 'PrintScreen' ||
+        (e.altKey && e.key === 'PrintScreen') ||
+        ((e.ctrlKey || e.metaKey) && keyLower === 'p') ||
+        (e.metaKey && e.shiftKey && (keyLower === '3' || keyLower === '4' || keyLower === '5'))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerViolation('Attempted Screenshot or Print shortcut');
+        return;
+      }
+    };
+
+    const handleCopy = (e) => {
+      e.preventDefault();
+      triggerViolation('Attempted to Copy content');
+    };
+
+    const handlePaste = (e) => {
+      e.preventDefault();
+      triggerViolation('Attempted to Paste content');
+    };
+
+    const handleCut = (e) => {
+      e.preventDefault();
+      triggerViolation('Attempted to Cut content');
+    };
+
+    const handleContextMenu = (e) => {
+      e.preventDefault();
     };
 
     document.addEventListener('fullscreenchange', handleFSChange);
     document.addEventListener('visibilitychange', handleVisChange);
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('copy', handleCopy, true);
+    window.addEventListener('paste', handlePaste, true);
+    window.addEventListener('cut', handleCut, true);
+    window.addEventListener('contextmenu', handleContextMenu, true);
+
     return () => {
       document.removeEventListener('fullscreenchange', handleFSChange);
       document.removeEventListener('visibilitychange', handleVisChange);
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('copy', handleCopy, true);
+      window.removeEventListener('paste', handlePaste, true);
+      window.removeEventListener('cut', handleCut, true);
+      window.removeEventListener('contextmenu', handleContextMenu, true);
     };
   }, []);
 

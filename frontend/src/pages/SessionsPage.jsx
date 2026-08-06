@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
-import { MdMonitor } from "react-icons/md";
-import { MdLock } from "react-icons/md";
-import { MdLockPerson } from "react-icons/md";
+import { MdMonitor, MdLock, MdLockPerson } from "react-icons/md";
+import { FaClock, FaUnlock, FaStopCircle, FaCheckCircle, FaTrash, FaUserCheck } from "react-icons/fa";
 
 export default function SessionsPage() {
   const [sessions, setSessions] = useState([]);
@@ -49,54 +48,83 @@ export default function SessionsPage() {
     return { text, expired: false, color: '#10B981' };
   };
 
-  const handleExtendTime = async (sessionId, studentName) => {
-    const input = prompt(`Extend test duration for ${studentName}:
-Enter extra minutes:`, '15');
-    if (!input) return;
-    const mins = parseInt(input, 10);
-    if (isNaN(mins) || mins <= 0) return alert('Invalid minutes');
+  const [modalState, setModalState] = useState(null);
+  // modalState = { title, icon, message, inputLabel, defaultValue, placeholder, isDanger, onConfirm }
 
-    try {
-      await api.extendTestSessionTime(sessionId, mins);
-      setActionMsg(`✅ Extended test duration by ${mins} minutes for ${studentName}.`);
-      setTimeout(() => setActionMsg(''), 4000);
-      loadSessions();
-    } catch (err) {
-      alert('Failed to extend time: ' + err.message);
-    }
+  const handleExtendTime = (sessionId, studentName) => {
+    setModalState({
+      title: 'Extend Test Duration',
+      icon: '⏳',
+      message: `Extend test duration for ${studentName}:`,
+      inputLabel: 'Enter extra minutes:',
+      defaultValue: '15',
+      placeholder: 'e.g. 15',
+      confirmText: 'Extend Time',
+      onConfirm: async (val) => {
+        const mins = parseInt(val, 10);
+        if (isNaN(mins) || mins <= 0) return alert('Invalid minutes');
+        try {
+          await api.extendTestSessionTime(sessionId, mins);
+          setActionMsg(`✅ Extended test duration by ${mins} minutes for ${studentName}.`);
+          setTimeout(() => setActionMsg(''), 4000);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Failed to extend time: ' + err.message);
+        }
+      }
+    });
   };
 
-  const handleUnlock = async (sessionId, studentName) => {
-    const input = prompt(`Unlock test session & reset proctor warnings for ${studentName}:\nEnter extra minutes to extend (Enter 0 to unlock with NO time extension, default: 0):`, '0');
-    if (input === null) return;
-    const parsed = parseInt(input, 10);
-    const mins = (!isNaN(parsed) && parsed >= 0) ? parsed : 0;
-
-    try {
-      await api.unlockTestSession(sessionId, mins);
-      const msg = mins > 0
-        ? `✅ Unlocked & extended time by ${mins} mins for ${studentName}.`
-        : `✅ Unlocked ${studentName} (no time extension).`;
-      setActionMsg(msg);
-      setTimeout(() => setActionMsg(''), 4000);
-      loadSessions();
-    } catch (err) {
-      alert('Failed to unlock: ' + err.message);
-    }
+  const handleUnlock = (sessionId, studentName) => {
+    setModalState({
+      title: 'Unlock Test Session',
+      icon: '🔓',
+      message: `Unlock test session and reset proctor warnings for ${studentName}.`,
+      inputLabel: 'Enter extra minutes to extend (0 for no extension):',
+      defaultValue: '0',
+      placeholder: '0',
+      confirmText: 'Unlock Session',
+      onConfirm: async (val) => {
+        const parsed = parseInt(val, 10);
+        const mins = (!isNaN(parsed) && parsed >= 0) ? parsed : 0;
+        try {
+          await api.unlockTestSession(sessionId, mins);
+          const msg = mins > 0
+            ? `✅ Unlocked & extended time by ${mins} mins for ${studentName}.`
+            : `✅ Unlocked ${studentName} (no time extension).`;
+          setActionMsg(msg);
+          setTimeout(() => setActionMsg(''), 4000);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Failed to unlock: ' + err.message);
+        }
+      }
+    });
   };
 
-  const handleEditSlot = async (userId, studentName, currentSlot) => {
-    const input = prompt(`Edit assigned slot timing for ${studentName}:`, currentSlot || '09:00-11:00');
-    if (input === null) return;
-
-    try {
-      await api.updateUserSlot(userId, input.trim());
-      setActionMsg(`✅ Updated slot timing to '${input}' for ${studentName}.`);
-      setTimeout(() => setActionMsg(''), 4000);
-      loadSessions();
-    } catch (err) {
-      alert('Failed to update slot timing: ' + err.message);
-    }
+  const handleEditSlot = (userId, studentName, currentSlot) => {
+    setModalState({
+      title: 'Edit Assigned Slot Timing',
+      icon: '🕒',
+      message: `Update test slot timing for ${studentName}:`,
+      inputLabel: 'Slot Timing (e.g. 09:00 - 11:00):',
+      defaultValue: currentSlot || '09:00-11:00',
+      confirmText: 'Save Slot',
+      onConfirm: async (val) => {
+        if (!val.trim()) return;
+        try {
+          await api.updateUserSlot(userId, val.trim());
+          setActionMsg(`✅ Updated slot timing to '${val}' for ${studentName}.`);
+          setTimeout(() => setActionMsg(''), 4000);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Failed to update slot timing: ' + err.message);
+        }
+      }
+    });
   };
 
   const handleToggleAccountActive = async (userId, studentName, currentActive) => {
@@ -110,47 +138,72 @@ Enter extra minutes:`, '15');
     }
   };
 
-  const handleForceFinish = async (sessionId, studentName) => {
-    if (!confirm(`Force finish and lock test for ${studentName}? Student will be deactivated.`)) return;
-    try {
-      await api.forceFinishTestSession(sessionId);
-      setActionMsg(`🛑 Force finished & locked session for ${studentName}.`);
-      setTimeout(() => setActionMsg(''), 4000);
-      loadSessions();
-    } catch (err) {
-      alert('Failed to force finish: ' + err.message);
-    }
+  const handleForceFinish = (sessionId, studentName) => {
+    setModalState({
+      title: 'Force Finish Test Session',
+      icon: '🛑',
+      message: `Are you sure you want to force finish and lock test for ${studentName}? Student account will be deactivated.`,
+      isDanger: true,
+      confirmText: 'Force Finish',
+      onConfirm: async () => {
+        try {
+          await api.forceFinishTestSession(sessionId);
+          setActionMsg(`🛑 Force finished & locked session for ${studentName}.`);
+          setTimeout(() => setActionMsg(''), 4000);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Failed to force finish: ' + err.message);
+        }
+      }
+    });
   };
 
-  const handleDelete = async (sessionId, studentName) => {
-    if (!confirm(`Delete test session record for ${studentName}?`)) return;
-    try {
-      await api.deleteTestSession(sessionId);
-      setActionMsg(`🗑️ Deleted test session for ${studentName}.`);
-      setTimeout(() => setActionMsg(''), 4000);
-      loadSessions();
-    } catch (err) {
-      alert('Failed to delete session: ' + err.message);
-    }
+  const handleDelete = (sessionId, studentName) => {
+    setModalState({
+      title: 'Delete Test Session',
+      icon: '🗑️',
+      message: `Are you sure you want to delete test session record for ${studentName}?`,
+      isDanger: true,
+      confirmText: 'Delete Session',
+      onConfirm: async () => {
+        try {
+          await api.deleteTestSession(sessionId);
+          setActionMsg(`🗑️ Deleted test session for ${studentName}.`);
+          setTimeout(() => setActionMsg(''), 4000);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Failed to delete session: ' + err.message);
+        }
+      }
+    });
   };
 
-  const handleBulkExtend = async () => {
+  const handleBulkExtend = () => {
     if (selectedIds.length === 0) return alert('Select at least one session');
-    const input = prompt(`Bulk Extend Time:
-Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
-    if (!input) return;
-    const mins = parseInt(input, 10);
-    if (isNaN(mins) || mins <= 0) return;
-
-    try {
-      await Promise.all(selectedIds.map(id => api.extendTestSessionTime(id, mins)));
-      setActionMsg(`✅ Bulk extended ${mins} minutes for ${selectedIds.length} sessions.`);
-      setTimeout(() => setActionMsg(''), 4000);
-      setSelectedIds([]);
-      loadSessions();
-    } catch (err) {
-      alert('Bulk extend error: ' + err.message);
-    }
+    setModalState({
+      title: 'Bulk Extend Test Time',
+      icon: '⏳',
+      message: `Enter extra minutes for ${selectedIds.length} selected session(s):`,
+      inputLabel: 'Extra Minutes:',
+      defaultValue: '15',
+      confirmText: 'Extend All',
+      onConfirm: async (val) => {
+        const mins = parseInt(val, 10);
+        if (isNaN(mins) || mins <= 0) return;
+        try {
+          await Promise.all(selectedIds.map(id => api.extendTestSessionTime(id, mins)));
+          setActionMsg(`✅ Bulk extended ${mins} minutes for ${selectedIds.length} sessions.`);
+          setTimeout(() => setActionMsg(''), 4000);
+          setSelectedIds([]);
+          loadSessions();
+          setModalState(null);
+        } catch (err) {
+          alert('Bulk extend error: ' + err.message);
+        }
+      }
+    });
   };
 
   const filteredSessions = sessions.filter(s => {
@@ -373,7 +426,7 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
                         </span>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
                           <span style={{
                             padding: '3px 10px', borderRadius: 100, fontSize: 12, fontWeight: 800,
                             background: s.proctor_locked ? '#FEF2F2' : (s.warning_count > 0 ? '#FEF3C7' : '#ECFDF5'),
@@ -381,6 +434,11 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
                           }}>
                             {s.proctor_locked ? '🚨 3/3 Locked' : `${s.warning_count}/3 Warnings`}
                           </span>
+                          {s.last_violation && (
+                            <span style={{ fontSize: 10, color: '#DC2626', fontWeight: 700, background: '#FEF2F2', padding: '1px 6px', borderRadius: 4, border: '1px solid #FCA5A5' }}>
+                              ⚠️ {s.last_violation}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -396,50 +454,50 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
                             className="btn btn-sm btn-primary"
-                            style={{ padding: '4px 8px', fontSize: 12 }}
+                            style={{ padding: '4px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             title="Extend test time"
                             onClick={() => handleExtendTime(s.id, s.student_name)}
                           >
-                            ⏱️ +Time
+                            <FaClock size={11} /> +Time
                           </button>
 
                           {s.proctor_locked ? (
                             <button
                               className="btn btn-sm btn-success"
-                              style={{ padding: '4px 8px', fontSize: 12 }}
+                              style={{ padding: '4px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                               onClick={() => handleUnlock(s.id, s.student_name)}
                             >
-                              ✅ Unlock
+                              <FaUnlock size={11} /> Unlock
                             </button>
                           ) : !s.is_completed ? (
                             <button
                               className="btn btn-sm btn-secondary"
-                              style={{ padding: '4px 8px', fontSize: 12 }}
+                              style={{ padding: '4px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                               title="Force finish test"
                               onClick={() => handleForceFinish(s.id, s.student_name)}
                             >
-                              🛑 Finish
+                              <FaStopCircle size={11} /> Finish
                             </button>
                           ) : null}
 
                           {!s.student_active && (
                             <button
                               className="btn btn-sm btn-ghost"
-                              style={{ padding: '4px 8px', fontSize: 12, color: '#059669', background: '#ECFDF5' }}
+                              style={{ padding: '4px 8px', fontSize: 12, color: '#059669', background: '#ECFDF5', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                               title="Re-activate student account for login"
                               onClick={() => handleToggleAccountActive(s.student_id, s.student_name, false)}
                             >
-                              🟢 Login
+                              <FaUserCheck size={11} /> Login
                             </button>
                           )}
 
                           <button
                             className="btn btn-sm btn-danger"
-                            style={{ padding: '4px 8px', fontSize: 12 }}
+                            style={{ padding: '4px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             title="Delete session"
                             onClick={() => handleDelete(s.id, s.student_name)}
                           >
-                            🗑
+                            <FaTrash size={11} />
                           </button>
                         </div>
                       </td>
@@ -451,6 +509,81 @@ Enter extra minutes for ${selectedIds.length} selected session(s):`, '15');
           </table>
         </div>
       )}
+
+      {/* Card Action Modal (Replaces browser prompt & alert popups) */}
+      {modalState && (
+        <CardActionModal
+          isOpen={!!modalState}
+          title={modalState.title}
+          icon={modalState.icon}
+          message={modalState.message}
+          inputLabel={modalState.inputLabel}
+          defaultValue={modalState.defaultValue}
+          placeholder={modalState.placeholder}
+          confirmText={modalState.confirmText}
+          isDanger={modalState.isDanger}
+          onConfirm={modalState.onConfirm}
+          onClose={() => setModalState(null)}
+        />
+      )}
     </>
+  );
+}
+
+function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValue, placeholder, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, onConfirm, onClose }) {
+  const [val, setVal] = useState(defaultValue || '');
+
+  useEffect(() => {
+    setVal(defaultValue || '');
+  }, [defaultValue, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+    }} onClick={onClose}>
+      <div className="card" style={{
+        maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+        background: '#FFFFFF', border: '1px solid #E2E8F0',
+        boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          {icon && <span style={{ fontSize: 24 }}>{icon}</span>}
+          <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>{title}</h3>
+        </div>
+
+        {message && <p style={{ color: '#475569', fontSize: 14, marginBottom: 16, lineHeight: 1.5 }}>{message}</p>}
+
+        {inputLabel !== undefined && (
+          <div className="form-group" style={{ marginBottom: 20 }}>
+            {inputLabel && <label className="form-label">{inputLabel}</label>}
+            <input
+              className="form-input"
+              value={val}
+              onChange={e => setVal(e.target.value)}
+              placeholder={placeholder}
+              autoFocus
+              onKeyDown={e => {
+                if (e.key === 'Enter') onConfirm(val);
+              }}
+            />
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={onClose}>{cancelText}</button>
+          <button
+            className={`btn ${isDanger ? 'btn-danger' : 'btn-primary'}`}
+            onClick={() => onConfirm(val)}
+            style={isDanger ? { background: '#EF4444', color: 'white' } : {}}
+          >
+            {confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

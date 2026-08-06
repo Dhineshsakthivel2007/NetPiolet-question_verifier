@@ -8,3 +8,4 @@ from app.models.evaluation import Evaluation
 from app.models.report import Report
 from app.models.test_session import TestSession
 from app.models.project import Project
+from app.models.audit_log import AuditLog

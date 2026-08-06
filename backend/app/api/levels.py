@@ -19,7 +19,10 @@ def list_levels(db: Session = Depends(get_db)):
 
 @router.post("", response_model=LevelResponse, status_code=201)
 def create_level(data: LevelCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return level_service.create_level(db, data)
+    l = level_service.create_level(db, data)
+    from app.services.audit_service import log_activity
+    log_activity(db, "LEVEL_CREATED", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Created level '{l.name}'")
+    return l
 
 
 @router.get("/{level_id}", response_model=LevelResponse)
@@ -38,4 +41,8 @@ def update_level(level_id: str, data: LevelUpdate, db: Session = Depends(get_db)
 
 @router.delete("/{level_id}", status_code=204)
 def delete_level(level_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    lvl = level_service.get_level(db, level_id)
+    lname = lvl.name if lvl else level_id
     if not level_service.delete_level(db, level_id): raise HTTPException(404, "Level not found")
+    from app.services.audit_service import log_activity
+    log_activity(db, "LEVEL_DELETED", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Deleted level '{lname}'")

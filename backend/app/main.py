@@ -72,3 +72,22 @@ def health_check():
         "version": settings.app_version,
         "validators_loaded": len(get_registry()),
     }
+
+
+# Optional Production SPA Static File Serving
+frontend_dist = settings.base_dir.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    if (frontend_dist / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="static_assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend_spa(full_path: str):
+        if full_path.startswith("api"):
+            return None
+        target = frontend_dist / full_path
+        if target.exists() and target.is_file():
+            return FileResponse(target)
+        return FileResponse(frontend_dist / "index.html")

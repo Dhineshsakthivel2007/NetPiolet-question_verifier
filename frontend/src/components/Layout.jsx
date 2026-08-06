@@ -1,20 +1,21 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
-import { MdLogout } from "react-icons/md";
-import { FaUsersCog } from "react-icons/fa";
 import {
   MdDashboard,
   MdMonitor,
   MdLayers,
   MdTopic,
   MdFactCheck,
-  MdAssessment
+  MdAssessment,
+  MdLogout
 } from "react-icons/md";
 
 import {
   FaQuestionCircle,
-  FaSignal
+  FaSignal,
+  FaUsersCog,
+  FaHistory
 } from "react-icons/fa";
 
 import { FiLogOut } from "react-icons/fi";
@@ -74,11 +75,18 @@ export default function Layout() {
               {sidebarOpen && <span style={{ opacity: 1 }}>{item.label}</span>}
             </NavLink>
           ))}
+
           {(role === 'admin' || role === 'professor') && (
-            <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-              <FaUsersCog className="nav-icon" size={20} />
-              {sidebarOpen && <span style={{ opacity: 1 }}>Users</span>}
-            </NavLink>
+            <>
+              <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+                <FaUsersCog className="nav-icon" size={20} />
+                {sidebarOpen && <span style={{ opacity: 1 }}>Users</span>}
+              </NavLink>
+              <NavLink to="/logs" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+                <FaHistory className="nav-icon" size={19} />
+                {sidebarOpen && <span style={{ opacity: 1 }}>Audit Logs</span>}
+              </NavLink>
+            </>
           )}
         </nav>
 

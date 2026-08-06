@@ -20,7 +20,10 @@ def list_topics(level_id: str | None = None, db: Session = Depends(get_db)):
 
 @router.post("", response_model=TopicResponse, status_code=201)
 def create_topic(data: TopicCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return topic_service.create_topic(db, data)
+    t = topic_service.create_topic(db, data)
+    from app.services.audit_service import log_activity
+    log_activity(db, "TOPIC_CREATED", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Created topic '{t.name}'")
+    return t
 
 
 @router.get("/{topic_id}", response_model=TopicResponse)
@@ -39,4 +42,8 @@ def update_topic(topic_id: str, data: TopicUpdate, db: Session = Depends(get_db)
 
 @router.delete("/{topic_id}", status_code=204)
 def delete_topic(topic_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    top = topic_service.get_topic(db, topic_id)
+    tname = top.name if top else topic_id
     if not topic_service.delete_topic(db, topic_id): raise HTTPException(404, "Topic not found")
+    from app.services.audit_service import log_activity
+    log_activity(db, "TOPIC_DELETED", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Deleted topic '{tname}'")

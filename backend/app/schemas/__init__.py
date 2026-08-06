@@ -141,7 +141,7 @@ class TestSessionResponse(BaseModel):
     started_at: datetime; expires_at: datetime | None = None
     is_completed: bool; attempts_used: int
     best_score: float; passed: bool; created_at: datetime
-    proctor_locked: bool = False; warning_count: int = 0
+    proctor_locked: bool = False; warning_count: int = 0; last_violation: str | None = None
     model_config = {"from_attributes": True}
 
     @field_serializer("started_at", "expires_at", "created_at")

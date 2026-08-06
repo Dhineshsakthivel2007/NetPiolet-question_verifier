@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaFlask, FaListCheck, FaCode, FaPlus, FaWandMagicSparkles, FaFloppyDisk, FaTrash, FaPenToSquare } from 'react-icons/fa6';
 
 export default function QuestionDetailPage() {
   const { id } = useParams();
@@ -13,6 +14,7 @@ export default function QuestionDetailPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [viewMode, setViewMode] = useState('visual'); // 'visual' | 'code'
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   // Modal for adding a new check
   const [showAddModal, setShowAddModal] = useState(false);
@@ -163,17 +165,39 @@ export default function QuestionDetailPage() {
 
   if (!question) return <div className="loader"><div className="spinner" /></div>;
 
+  const handleDeleteQuestion = () => {
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteQuestion = async () => {
+    try {
+      await api.deleteQuestion(id);
+      navigate('/questions');
+    } catch (err) {
+      alert(err.message || 'Failed to delete question');
+    }
+  };
+
   return (
     <>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <button className="btn btn-sm btn-secondary" onClick={() => navigate('/questions')} style={{ marginBottom: 8 }}>← Back to Questions</button>
-          <h2>{question.title}</h2>
-          <p>Configure question details, lab environment, and evaluation rules</p>
+          <h2 style={{ margin: 0 }}>{question.title}</h2>
+          <p style={{ margin: '4px 0 0 0' }}>Configure question details, lab environment, and evaluation rules</p>
         </div>
-        <button className="btn btn-primary" onClick={handleTestLab} style={{ fontSize: 14, padding: '10px 20px' }}>
-          🧪 Test Lab Canvas
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button className="btn btn-primary" onClick={handleTestLab} style={{ fontSize: 14, padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <FaFlask /> Test Lab Canvas
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleDeleteQuestion}
+            style={{ background: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, padding: '8px 16px' }}
+          >
+            <FaTrash /> Delete Question
+          </button>
+        </div>
       </div>
 
       {error && <div className="badge badge-fail" style={{ padding: 12, width: '100%', marginBottom: 16, display: 'block' }}>{error}</div>}
@@ -182,13 +206,16 @@ export default function QuestionDetailPage() {
       {/* Editable Question Details */}
       <div className="card" style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700 }}>📝 Question Details</h3>
+          <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FaPenToSquare style={{ color: '#7C5CFC' }} /> Question Details
+          </h3>
           <button
             className="btn btn-primary btn-sm"
             onClick={handleSaveQuestion}
             disabled={!hasChanges || savingQuestion}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            {savingQuestion ? '💾 Saving...' : '💾 Save Question Changes'}
+            <FaFloppyDisk /> {savingQuestion ? 'Saving...' : 'Save Question Changes'}
           </button>
         </div>
 
@@ -260,8 +287,8 @@ export default function QuestionDetailPage() {
               value={editForm.is_active ? 'true' : 'false'}
               onChange={e => handleFieldChange('is_active', e.target.value === 'true')}
             >
-              <option value="true">✅ Active</option>
-              <option value="false">❌ Inactive</option>
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
             </select>
           </div>
           <div className="form-group">
@@ -293,37 +320,39 @@ export default function QuestionDetailPage() {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>🧪 Evaluation Test Cases</h3>
+            <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FaFlask style={{ color: '#7C5CFC' }} /> Evaluation Test Cases
+            </h3>
             {/* View Mode Toggle */}
             <div style={{ display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3 }}>
               <button
                 className={`btn btn-sm ${viewMode === 'visual' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ borderRadius: 6, fontSize: 13, padding: '4px 12px' }}
+                style={{ borderRadius: 6, fontSize: 13, padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 6 }}
                 onClick={() => setViewMode('visual')}
               >
-                🧪 Visual Test Cases ({checksList.length})
+                <FaListCheck /> Visual Test Cases ({checksList.length})
               </button>
               <button
                 className={`btn btn-sm ${viewMode === 'code' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ borderRadius: 6, fontSize: 13, padding: '4px 12px' }}
+                style={{ borderRadius: 6, fontSize: 13, padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 6 }}
                 onClick={() => setViewMode('code')}
               >
-                📄 JSON Schema
+                <FaCode /> JSON Schema
               </button>
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
             {viewMode === 'visual' && (
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowAddModal(true)}>
-                ➕ Add Test Case
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FaPlus /> Add Test Case
               </button>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={handleGeneratePlan} disabled={generating}>
-              {generating ? '⏳ Generating...' : '✨ Generate with AI'}
+            <button className="btn btn-secondary btn-sm" onClick={handleGeneratePlan} disabled={generating} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <FaWandMagicSparkles /> {generating ? 'Generating...' : 'Generate with AI'}
             </button>
-            <button className="btn btn-primary btn-sm" onClick={handleSavePlan} disabled={saving}>
-              {saving ? 'Saving...' : '💾 Save Plan'}
+            <button className="btn btn-primary btn-sm" onClick={handleSavePlan} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <FaFloppyDisk /> {saving ? 'Saving...' : 'Save Plan'}
             </button>
           </div>
         </div>
@@ -346,15 +375,15 @@ export default function QuestionDetailPage() {
           <div>
             {checksList.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px 20px', background: '#F9FAFB', borderRadius: 12, border: '2px dashed #E5E7EB' }}>
-                <div style={{ fontSize: 40, marginBottom: 10 }}>🧪</div>
+                <div style={{ fontSize: 36, marginBottom: 10, color: '#7C5CFC' }}><FaFlask /></div>
                 <h4 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>No Test Cases Defined</h4>
                 <p style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>Generate evaluation checks with AI or add test cases manually.</p>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={handleGeneratePlan} disabled={generating}>
-                    ✨ Generate with AI
+                  <button className="btn btn-secondary btn-sm" onClick={handleGeneratePlan} disabled={generating} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <FaWandMagicSparkles /> Generate with AI
                   </button>
-                  <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)}>
-                    ➕ Add Test Case
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <FaPlus /> Add Test Case
                   </button>
                 </div>
               </div>
@@ -415,11 +444,11 @@ export default function QuestionDetailPage() {
 
                     <button
                       className="btn btn-sm btn-ghost"
-                      style={{ color: '#EF4444' }}
+                      style={{ color: '#EF4444', display: 'flex', alignItems: 'center', gap: 4 }}
                       title="Delete Test Case"
                       onClick={() => handleDeleteCheck(idx)}
                     >
-                      🗑 Delete
+                      <FaTrash size={12} /> Delete
                     </button>
                   </div>
                 ))}
@@ -450,7 +479,9 @@ export default function QuestionDetailPage() {
           background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
           <div className="card" style={{ maxWidth: 500, width: '92%', padding: 28, animation: 'fadeIn 0.2s ease' }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16 }}>➕ Add New Test Case</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FaPlus style={{ color: '#7C5CFC' }} /> Add New Test Case
+            </h3>
 
             <div className="form-group" style={{ marginBottom: 12 }}>
               <label className="form-label">Validator Type</label>
@@ -520,6 +551,34 @@ export default function QuestionDetailPage() {
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary" onClick={() => setShowAddModal(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleAddCheckSubmit}>Add Test Case</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Question Confirmation Card Modal */}
+      {showDeleteModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+        }} onClick={() => setShowDeleteModal(false)}>
+          <div className="card" style={{
+            maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+            background: '#FFFFFF', border: '1px solid #E2E8F0',
+            boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <FaTrash size={22} style={{ color: '#EF4444' }} />
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', margin: 0 }}>Delete Question</h3>
+            </div>
+            <p style={{ color: '#475569', fontSize: 14, marginBottom: 20, lineHeight: 1.5 }}>
+              Are you sure you want to delete question <strong>"{editForm.title || 'this question'}"</strong>?<br /><br />
+              This will permanently delete the question and all associated test sessions and evaluation reports.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDeleteQuestion} style={{ background: '#EF4444', color: 'white' }}>Delete Question</button>
             </div>
           </div>
         </div>

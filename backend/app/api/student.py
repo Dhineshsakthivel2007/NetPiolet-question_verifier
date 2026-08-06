@@ -25,40 +25,26 @@ router = APIRouter(prefix="/student", tags=["Student Portal"])
 
 
 def _calculate_session_expiry(user: User | None, question: Question, now: datetime) -> datetime:
-    """Calculate expiration time based on assigned slot timing (e.g. '09:00-11:00' = 120 mins) and question time limit."""
-    slot_expiry = None
+    """Calculate expiration time based on assigned slot duration and question time limit."""
     slot_duration_mins = None
 
     if user and getattr(user, 'session_slot', None) and user.session_slot.strip():
         match = re.search(r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', user.session_slot.strip())
         if match:
             try:
-                start_t = datetime.strptime(match.group(1), "%H:%M").time()
-                end_t = datetime.strptime(match.group(2), "%H:%M").time()
-
-                start_dt = datetime.combine(now.date(), start_t)
-                end_dt = datetime.combine(now.date(), end_t)
-                if end_dt <= start_dt:
-                    end_dt += timedelta(days=1)
-
-                slot_duration_mins = int((end_dt - start_dt).total_seconds() / 60)
-                slot_expiry = end_dt.replace(tzinfo=timezone.utc)
+                t1 = datetime.strptime(match.group(1), "%H:%M")
+                t2 = datetime.strptime(match.group(2), "%H:%M")
+                if t2 <= t1:
+                    t2 += timedelta(days=1)
+                slot_duration_mins = int((t2 - t1).total_seconds() / 60)
             except Exception:
                 pass
 
-    if question.time_limit_minutes and question.time_limit_minutes > 0:
-        limit_mins = question.time_limit_minutes
-    elif slot_duration_mins and slot_duration_mins > 0:
-        limit_mins = slot_duration_mins
-    else:
-        limit_mins = 60
+    q_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 0
+    s_mins = slot_duration_mins if (slot_duration_mins and slot_duration_mins > 0) else 0
 
-    calc_expiry = now + timedelta(minutes=limit_mins)
-
-    if slot_expiry and slot_expiry > now:
-        return max(calc_expiry, slot_expiry)
-
-    return calc_expiry
+    limit_mins = q_mins if q_mins > 0 else (s_mins if s_mins > 0 else 60)
+    return now + timedelta(minutes=limit_mins)
 
 
 def _require_student(user: User = Depends(get_current_user)) -> User:
@@ -114,11 +100,20 @@ def start_test(question_id: str, db: Session = Depends(get_db), user: User = Dep
         TestSession.question_id == question_id,
     ).order_by(TestSession.created_at.desc()).first()
 
+    now = datetime.now(timezone.utc)
+
     if existing:
-        # Check if expired
-        if not existing.is_completed and existing.expires_at:
+        # Check if expired or update expiry if slot duration increased
+        if not existing.is_completed:
+            start_base = _make_utc(existing.started_at) or now
+            new_expiry = _calculate_session_expiry(user, question, start_base)
+            if existing.expires_at != new_expiry:
+                existing.expires_at = new_expiry
+                db.commit()
+                db.refresh(existing)
+
             exp = _make_utc(existing.expires_at)
-            if exp and datetime.now(timezone.utc) > exp:
+            if exp and now > exp:
                 existing.is_completed = True
                 db.commit()
                 db.refresh(existing)
@@ -235,16 +230,25 @@ def clear_submission(session_id: str, db: Session = Depends(get_db), user: User 
 
 @router.get("/test/{session_id}", response_model=TestSessionResponse)
 def get_session(session_id: str, db: Session = Depends(get_db), user: User = Depends(_require_student)):
-    """Get test session status."""
+    """Get test session status (with live slot timing sync)."""
     session = db.query(TestSession).filter(TestSession.id == session_id, TestSession.student_id == user.id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Test session not found")
 
-    # Auto-expire
-    if session.expires_at and not session.is_completed:
+    # Dynamic slot timing sync & auto-expire check
+    if not session.is_completed:
         now = datetime.now(timezone.utc)
-        exp = session.expires_at.replace(tzinfo=timezone.utc) if session.expires_at.tzinfo is None else session.expires_at
-        if now > exp:
+        question = db.query(Question).filter(Question.id == session.question_id).first()
+        if question:
+            start_base = _make_utc(session.started_at) or now
+            new_expiry = _calculate_session_expiry(user, question, start_base)
+            if session.expires_at != new_expiry:
+                session.expires_at = new_expiry
+                db.commit()
+                db.refresh(session)
+
+        exp = _make_utc(session.expires_at)
+        if exp and now > exp:
             session.is_completed = True
             db.commit()
 
@@ -313,16 +317,28 @@ def report_warning(
         db.add(session)
 
     session.warning_count = req.warning_count
+    session.last_violation = req.reason
     if req.warning_count >= 3:
         session.proctor_locked = True
         session.is_completed = True
 
     db.commit()
     db.refresh(session)
+
+    from app.services.audit_service import log_activity
+    log_activity(
+        db,
+        action="PROCTOR_VIOLATION",
+        username=user.username,
+        role=str(user.role.value if hasattr(user.role, 'value') else user.role),
+        details=f"Violation: {req.reason} (Warning {req.warning_count}/3)"
+    )
+
     return {
         "status": "ok",
         "warning_count": session.warning_count,
         "proctor_locked": session.proctor_locked,
+        "last_violation": session.last_violation,
         "session_id": session.id,
     }
 
@@ -449,11 +465,16 @@ def force_finish_test_session(session_id: str, db: Session = Depends(get_db), us
                 print("Error force evaluating project:", e)
 
     student = db.query(User).filter(User.id == session.student_id).first()
+    sname = student.username if student else session.student_id
     if student and student.role == UserRole.student:
         student.is_active = False
         student.attendance = "Absent"
     db.commit()
     db.refresh(session)
+
+    from app.services.audit_service import log_activity
+    log_activity(db, "FORCE_FINISH", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Force finished & locked test for {sname}")
+
     return session
 
 
@@ -465,8 +486,16 @@ def delete_test_session(session_id: str, db: Session = Depends(get_db), user: Us
     session = db.query(TestSession).filter(TestSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Test session not found")
+    
+    student = db.query(User).filter(User.id == session.student_id).first()
+    sname = student.username if student else session.student_id
+
     db.delete(session)
     db.commit()
+
+    from app.services.audit_service import log_activity
+    log_activity(db, "SESSION_DELETED", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Deleted test session record for student {sname}")
+
     return None
 
 
@@ -502,12 +531,17 @@ def extend_test_session_time(
 
     # Re-activate student account if deactivated
     student = db.query(User).filter(User.id == session.student_id).first()
-    if student:
+    sname = student.username if student else session.student_id
+    if student and student.role == UserRole.student:
         student.is_active = True
         student.attendance = "Present"
 
     db.commit()
     db.refresh(session)
+
+    from app.services.audit_service import log_activity
+    log_activity(db, "EXTEND_TIME", user.username, role=str(user.role.value if hasattr(user.role, 'value') else user.role), details=f"Extended test time by {extra} mins for {sname}")
+
     return session
 
 
@@ -574,6 +608,7 @@ def get_all_test_sessions(db: Session = Depends(get_db), user: User = Depends(ge
             "warning_count": s.warning_count,
             "dual_login_flag": getattr(s, 'dual_login_flag', False) or False,
             "completion_reason": getattr(s, 'completion_reason', "") or "",
+            "last_violation": getattr(s, 'last_violation', "") or "",
             "best_score": best_score,
             "passed": passed,
             "has_evaluation": eval_rec is not None or s.is_completed or s.best_score is not None,
