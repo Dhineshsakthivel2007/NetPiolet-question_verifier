@@ -7,12 +7,16 @@ __pycache__/
 venv/
 env/
 
-# Database & Generated Files (DO NOT COMMIT SQLite DBs OR UPLOADS)
+# Database Files (DO NOT COMMIT SQLite DBs OR SQL DUMPS)
 *.db
 *.db-shm
 *.db-wal
 *.db.bak
 pteval.db*
+netpiolet_mysql_dump.sql
+*.sql
+
+# Uploads & Reports Directories
 uploads/
 reports/
 

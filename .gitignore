@@ -8,9 +8,11 @@ dist/
 *.env
 !.env.example
 
-# Backend Databases & Generated Uploads
+# Backend Databases, SQL Dumps & Generated Uploads
 backend/*.db*
 backend/pteval.db*
+backend/netpiolet_mysql_dump.sql
+backend/*.sql
 backend/uploads/*
 !backend/uploads/.gitkeep
 backend/reports/*
