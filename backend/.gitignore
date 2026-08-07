@@ -1,6 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*$py.class
+
+# Virtual environments
+venv/
+env/
+
+# Database & Generated Files (DO NOT COMMIT SQLite DBs OR UPLOADS)
+*.db
+*.db-shm
+*.db-wal
+*.db.bak
+pteval.db*
+uploads/
+reports/
+
+# Environment variables & secrets
 .env
 *.env
 !.env.example
-venv/
-__pycache__/
-*.pyc
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/

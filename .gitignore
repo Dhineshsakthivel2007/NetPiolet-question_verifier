@@ -1,4 +1,24 @@
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Environment files
 .env
-frontend/.env
-.env
-frontend/.env
+*.env
+!.env.example
+
+# Backend Databases & Generated Uploads
+backend/*.db*
+backend/pteval.db*
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/reports/*
+!backend/reports/.gitkeep
+backend/venv/
+backend/__pycache__/
+
+# OS & Editor files
+.DS_Store
+.idea/
+.vscode/
