@@ -123,6 +123,30 @@ export const api = {
   // Reports
   getReport: (evalId) => request(`/reports/${evalId}`),
   getReportPdfUrl: (evalId) => `${API_BASE}/reports/${evalId}/pdf`,
+  downloadReportPdf: async (evalId, studentName = 'candidate') => {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_BASE}/reports/${evalId}/pdf`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let msg = 'Failed to download PDF report';
+      try {
+        const errData = await res.json();
+        msg = errData.detail || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = (studentName || 'candidate').replace(/[^a-zA-Z0-9_-]/g, '_');
+    a.download = `report_${safeName}_${evalId.slice(0, 8)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
 
   // Health
   health: () => request('/health'),

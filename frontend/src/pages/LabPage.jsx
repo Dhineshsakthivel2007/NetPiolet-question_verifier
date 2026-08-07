@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
+import { FaArrowLeft } from 'react-icons/fa';
 import CanvasEngine from '../features/canvas/CanvasEngine.jsx';
 import DevicePalette from '../features/devices/DevicePalette.jsx';
 import PropertiesPanel from '../features/properties/PropertiesPanel.jsx';
@@ -469,24 +470,63 @@ export default function LabPage() {
         boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            title="Restart & Return to Exam Guidelines"
-            onClick={() => {
-              if (document.fullscreenElement) {
-                document.exitFullscreen().catch(() => {});
-              }
-              window.location.href = '/student';
-            }}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 36, color: '#6B7280', padding: '4px 6px',
-              borderRadius: 6, display: 'flex', alignItems: 'center',
-              justifyContent: 'center', transition: 'all 0.2s',
-            }}
-          >
-            ⟳
-          </button>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg, #7C5CFC, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 800 }}>PG</div>
+          {/* Admin / Professor Back to Question Button */}
+          {(() => {
+            const role = localStorage.getItem('role');
+            if (role === 'admin' || role === 'professor') {
+              return (
+                <button
+                  onClick={() => {
+                    const qId = questionId || localStorage.getItem('last_admin_question_id');
+                    if (qId) {
+                      navigate(`/questions/${qId}`);
+                    } else {
+                      navigate('/questions');
+                    }
+                  }}
+                  style={{
+                    background: '#7C5CFC',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '6px 14px',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    boxShadow: '0 2px 8px rgba(124,92,252,0.35)',
+                    transition: 'all 0.2s ease',
+                  }}
+                  title="Exit Test Mode and return to Question Details"
+                >
+                  <FaArrowLeft size={11} />
+                  <span>Back to Question</span>
+                </button>
+              );
+            }
+            return (
+              <button
+                title="Restart & Return to Exam Guidelines"
+                onClick={() => {
+                  if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                  window.location.href = '/student';
+                }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 36, color: '#6B7280', padding: '4px 6px',
+                  borderRadius: 6, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', transition: 'all 0.2s',
+                }}
+              >
+                ⟳
+              </button>
+            );
+          })()}
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg, #7C5CFC, #A78BFA)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 800 }}>NP</div>
           <div
             onClick={() => setExpandQuestion(!expandQuestion)}
             style={{

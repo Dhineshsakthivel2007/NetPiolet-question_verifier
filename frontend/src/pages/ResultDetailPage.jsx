@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaFilePdf, FaClock, FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 
 export default function ResultDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [evaluation, setEvaluation] = useState(null);
   const [showFilter, setShowFilter] = useState('all'); // all | passed | failed
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   useEffect(() => { api.getEvaluation(id).then(setEvaluation); }, [id]);
 
@@ -55,8 +57,8 @@ export default function ResultDetailPage() {
             </div>
             <div style={{ marginTop: 16 }}>
               {evaluation.passed
-                ? <span className="badge badge-pass" style={{ fontSize: 14, padding: '6px 16px' }}>✓ PASSED</span>
-                : <span className="badge badge-fail" style={{ fontSize: 14, padding: '6px 16px' }}>✗ FAILED</span>}
+                ? <span className="badge badge-pass" style={{ fontSize: 14, padding: '6px 16px' }}><FaCheckCircle style={{ marginRight: 4 }} /> PASSED</span>
+                : <span className="badge badge-fail" style={{ fontSize: 14, padding: '6px 16px' }}><FaTimesCircle style={{ marginRight: 4 }} /> FAILED</span>}
             </div>
             <p style={{ fontSize: 22, fontWeight: 700, color: evaluation.passed ? 'var(--success)' : 'var(--danger)', marginTop: 8 }}>
               {pct.toFixed(1)}%
@@ -87,17 +89,45 @@ export default function ResultDetailPage() {
           {/* Student Info */}
           <div className="card" style={{ marginBottom: 20 }}>
             <h4 style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>STUDENT INFO</h4>
-            <p><strong>Name:</strong> {evaluation.student_name || '—'}</p>
-            <p><strong>ID:</strong> {evaluation.student_id || '—'}</p>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            <p style={{ margin: '4px 0', fontSize: 14 }}>
+              <strong>Name:</strong> {evaluation.student_name || '—'}
+            </p>
+            {evaluation.roll_number ? (
+              <p style={{ margin: '4px 0', fontSize: 14 }}>
+                <strong>Roll Number:</strong> <span style={{ color: '#007AFF', fontWeight: 800 }}>{evaluation.roll_number}</span>
+              </p>
+            ) : (evaluation.student_id && evaluation.student_id.length < 30 ? (
+              <p style={{ margin: '4px 0', fontSize: 14 }}>
+                <strong>ID:</strong> {evaluation.student_id}
+              </p>
+            ) : null)}
+            {evaluation.session_slot && (
+              <p style={{ margin: '4px 0', fontSize: 13, color: '#475569' }}>
+                <strong>Slot Timing:</strong> {evaluation.session_slot}
+              </p>
+            )}
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
               Attempt: #{evaluation.attempt_number || 1}
             </p>
           </div>
 
-          <a className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
-            href={api.getReportPdfUrl(evaluation.id)} target="_blank" rel="noreferrer">
-            📥 Download PDF Report
-          </a>
+          <button
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}
+            disabled={downloadingPdf}
+            onClick={async () => {
+              setDownloadingPdf(true);
+              try {
+                await api.downloadReportPdf(evaluation.id, evaluation.student_name);
+              } catch (err) {
+                alert('PDF download failed: ' + err.message);
+              } finally {
+                setDownloadingPdf(false);
+              }
+            }}
+          >
+            {downloadingPdf ? <><FaClock /> Downloading PDF...</> : <><FaFilePdf size={16} /> Download Candidate PDF Report</>}
+          </button>
         </div>
 
         {/* Right: Detailed Check Results */}

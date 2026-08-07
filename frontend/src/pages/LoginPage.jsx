@@ -92,8 +92,8 @@ export default function LoginPage() {
       <div className="login-card">
         <div className="card">
           <div className="logo-section">
-            <div className="logo-icon">PG</div>
-            <h2>PacketGrader</h2>
+            <div className="logo-icon">NP</div>
+            <h2>NetPilot</h2>
             <p className="subtitle">AI-Powered Cisco Lab Evaluation</p>
           </div>
 

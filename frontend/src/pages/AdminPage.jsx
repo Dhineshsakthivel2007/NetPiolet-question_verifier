@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api.js';
+import SlotTimePicker from '../components/SlotTimePicker.jsx';
 import { FaTrash } from 'react-icons/fa';
 import {
   FiUsers, FiUserCheck, FiUserX, FiClock, FiSearch,
@@ -25,21 +26,34 @@ function getAvatarStyle(name) {
   return AVATAR_COLORS[idx];
 }
 
-function getSlotStatus(slotStr) {
+function getSlotStatus(slotStr, createdAtStr) {
   if (!slotStr || slotStr === 'All Slots' || slotStr === '—' || slotStr === 'any') {
     return { status: 'active', label: '🟢 Active Now', color: '#059669', bg: '#D1FAE5' };
   }
 
   const now = new Date();
-  const currentMins = now.getHours() * 60 + now.getMinutes();
-
   const clean = slotStr.trim().toLowerCase();
-  const match = clean.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*[-–—to]+\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?/);
-  if (!match) {
+
+  // 1. Check if slotStr contains an explicit date (YYYY-MM-DD or DD/MM/YYYY or DD-MM-YYYY)
+  const dateMatch = clean.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
+  let slotDate = null;
+  if (dateMatch) {
+    const rawDateStr = dateMatch[1].replace(/\//g, '-');
+    const parts = rawDateStr.split('-');
+    if (parts[0].length === 4) {
+      slotDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    } else {
+      slotDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+    }
+  }
+
+  // 2. Parse time window (HH:MM - HH:MM)
+  const timeMatch = clean.match(/(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*[-–—to]+\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?/);
+  if (!timeMatch) {
     return { status: 'active', label: '🟢 Active Now', color: '#059669', bg: '#D1FAE5' };
   }
 
-  let [, h1Str, m1Str, p1, h2Str, m2Str, p2] = match;
+  let [, h1Str, m1Str, p1, h2Str, m2Str, p2] = timeMatch;
   let h1 = parseInt(h1Str, 10);
   let m1 = parseInt(m1Str || '0', 10);
   let h2 = parseInt(h2Str, 10);
@@ -56,15 +70,30 @@ function getSlotStatus(slotStr) {
   }
   if (h2 < h1 && h2 < 12) h2 += 12;
 
-  const startMins = h1 * 60 + m1;
-  const endMins = h2 * 60 + m2;
+  // 3. Target base date
+  const baseDate = slotDate || (createdAtStr ? new Date(createdAtStr) : now);
 
-  if (currentMins >= startMins && currentMins <= endMins) {
+  const startDt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), h1, m1, 0);
+  const endDt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), h2, m2, 0);
+  if (endDt <= startDt) {
+    endDt.setDate(endDt.getDate() + 1);
+  }
+
+  // If slotDate was NOT explicitly typed in slotStr, check if creation date was on a prior day
+  if (!slotDate && createdAtStr) {
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const createdDayStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0, 0, 0);
+    if (now > endDt && todayStart > createdDayStart) {
+      return { status: 'expired', label: '🛑 Slot Ended', color: '#DC2626', bg: '#FEE2E2' };
+    }
+  }
+
+  if (now >= startDt && now <= endDt) {
     return { status: 'active', label: '🟢 Active Now', color: '#059669', bg: '#D1FAE5' };
-  } else if (currentMins < startMins) {
+  } else if (now < startDt) {
     return { status: 'upcoming', label: '⏳ Upcoming', color: '#D97706', bg: '#FEF3C7' };
   } else {
-    return { status: 'expired', label: '🛑 Expired', color: '#DC2626', bg: '#FEE2E2' };
+    return { status: 'expired', label: '🛑 Slot Ended', color: '#DC2626', bg: '#FEE2E2' };
   }
 }
 
@@ -77,7 +106,7 @@ export default function AdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newUser, setNewUser] = useState({
     username: '', email: '', password: '', role: 'student',
-    roll_number: '', session_slot: '09:00-11:00', level_id: ''
+    roll_number: '', session_slot: '09:00 AM - 11:00 AM', level_id: ''
   });
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
@@ -595,7 +624,7 @@ export default function AdminPage() {
                 const avatarStyle = getAvatarStyle(u?.username);
                 const isPresent = u.attendance === 'Present';
                 const isAbsent = u.attendance === 'Absent';
-                const slotInfo = getSlotStatus(u.session_slot);
+                const slotInfo = getSlotStatus(u.session_slot, u.created_at);
 
                 return (
                   <div
@@ -753,7 +782,7 @@ export default function AdminPage() {
                 <tbody>
                   {filteredStudents.map(u => {
                     const avatarStyle = getAvatarStyle(u.username);
-                    const slotInfo = getSlotStatus(u.session_slot);
+                    const slotInfo = getSlotStatus(u.session_slot, u.created_at);
                     const isPresent = u.attendance === 'Present';
 
                     return (
@@ -1039,8 +1068,7 @@ export default function AdminPage() {
                   <input type="password" className="form-input" required placeholder="Password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 4 }}>Slot Timing</label>
-                  <input className="form-input" placeholder="09:00-11:00" value={newUser.session_slot} onChange={e => setNewUser({ ...newUser, session_slot: e.target.value })} />
+                  <SlotTimePicker value={newUser.session_slot} onChange={val => setNewUser({ ...newUser, session_slot: val })} />
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 4 }}>Assigned Level</label>

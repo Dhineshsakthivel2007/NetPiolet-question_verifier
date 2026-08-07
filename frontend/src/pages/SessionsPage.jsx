@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
+import SlotTimePicker from '../components/SlotTimePicker.jsx';
 import { MdMonitor, MdLock, MdLockPerson } from "react-icons/md";
 import { FaClock, FaUnlock, FaStopCircle, FaCheckCircle, FaTrash, FaUserCheck } from "react-icons/fa";
 
@@ -109,8 +110,8 @@ export default function SessionsPage() {
       title: 'Edit Assigned Slot Timing',
       icon: '🕒',
       message: `Update test slot timing for ${studentName}:`,
-      inputLabel: 'Slot Timing (e.g. 09:00 - 11:00):',
-      defaultValue: currentSlot || '09:00-11:00',
+      isSlotSelector: true,
+      defaultValue: currentSlot || '09:00 AM - 11:00 AM',
       confirmText: 'Save Slot',
       onConfirm: async (val) => {
         if (!val.trim()) return;
@@ -530,7 +531,7 @@ export default function SessionsPage() {
   );
 }
 
-function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValue, placeholder, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, onConfirm, onClose }) {
+function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValue, placeholder, confirmText = 'Confirm', cancelText = 'Cancel', isDanger = false, isSlotSelector = false, onConfirm, onClose }) {
   const [val, setVal] = useState(defaultValue || '');
 
   useEffect(() => {
@@ -546,7 +547,7 @@ function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValu
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
     }} onClick={onClose}>
       <div className="card" style={{
-        maxWidth: 440, width: '100%', padding: 28, borderRadius: 16,
+        maxWidth: 480, width: '100%', padding: 28, borderRadius: 16,
         background: '#FFFFFF', border: '1px solid #E2E8F0',
         boxShadow: '0 20px 45px rgba(0,0,0,0.2)', animation: 'fadeIn 0.2s ease-out'
       }} onClick={e => e.stopPropagation()}>
@@ -557,7 +558,11 @@ function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValu
 
         {message && <p style={{ color: '#475569', fontSize: 14, marginBottom: 16, lineHeight: 1.5 }}>{message}</p>}
 
-        {inputLabel !== undefined && (
+        {isSlotSelector ? (
+          <div style={{ marginBottom: 20 }}>
+            <SlotTimePicker value={val} onChange={setVal} />
+          </div>
+        ) : (inputLabel !== undefined && (
           <div className="form-group" style={{ marginBottom: 20 }}>
             {inputLabel && <label className="form-label">{inputLabel}</label>}
             <input
@@ -571,7 +576,7 @@ function CardActionModal({ isOpen, title, icon, message, inputLabel, defaultValu
               }}
             />
           </div>
-        )}
+        ))}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={onClose}>{cancelText}</button>

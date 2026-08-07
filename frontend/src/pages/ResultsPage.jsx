@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaFilePdf, FaFileExcel, FaCheck, FaTimes, FaClock } from 'react-icons/fa';
 
 export default function ResultsPage() {
   const [evaluations, setEvaluations] = useState([]);
@@ -45,14 +46,17 @@ export default function ResultsPage() {
   // Available unique slot timings for dropdown filter
   const availableSlots = Array.from(new Set(rawEvaluations.map(e => e.session_slot).filter(Boolean)));
 
-  const handleDownloadExcel = async () => {
+  const handleDownloadExcel = async (passedOverride) => {
     setDownloading(true);
     try {
       const params = new URLSearchParams();
-      if (filterPassed !== '') params.set('passed', filterPassed);
+      const targetPassed = passedOverride !== undefined ? passedOverride : filterPassed;
+      if (targetPassed !== '') params.set('passed', targetPassed);
       if (filterQuestion) params.set('question_id', filterQuestion);
+      if (filterSlot) params.set('session_slot', filterSlot);
       if (fromDate) params.set('from_date', fromDate);
       if (toDate) params.set('to_date', toDate);
+
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/evaluations/export?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -69,7 +73,8 @@ export default function ResultsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `evaluations_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const tag = targetPassed === 'true' ? 'passed' : targetPassed === 'false' ? 'failed' : 'all';
+      a.download = `evaluations_${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -91,8 +96,8 @@ export default function ResultsPage() {
   return (
     <>
       <div className="page-header">
-        <h2>📊 Evaluation Results</h2>
-        <p>View final student test results grouped by slot timing, analyze performance, and export report to Excel</p>
+        <h2>📊 Evaluation Results & Excel Export</h2>
+        <p>View final student test results grouped by slot timing, filter by date or pass/fail status, and export to Excel</p>
       </div>
 
       {/* Stats */}
@@ -119,15 +124,15 @@ export default function ResultsPage() {
         </div>
       </div>
 
-      {/* Filters & Export */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select className="form-select" value={filterPassed} onChange={e => setFilterPassed(e.target.value)} style={{ width: 150 }}>
-          <option value="">All Statuses</option>
+      {/* Filters & Export Bar */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap', background: '#FFFFFF', padding: 16, borderRadius: 12, border: '1px solid #E2E8F0' }}>
+        <select className="form-select" value={filterPassed} onChange={e => setFilterPassed(e.target.value)} style={{ width: 140 }}>
+          <option value="">All Status</option>
           <option value="true">✅ Passed Only</option>
           <option value="false">❌ Failed Only</option>
         </select>
 
-        <select className="form-select" value={filterQuestion} onChange={e => setFilterQuestion(e.target.value)} style={{ width: 220 }}>
+        <select className="form-select" value={filterQuestion} onChange={e => setFilterQuestion(e.target.value)} style={{ width: 200 }}>
           <option value="">All Questions</option>
           {questions.map(q => <option key={q.id} value={q.id}>{q.title}</option>)}
         </select>
@@ -139,17 +144,29 @@ export default function ResultsPage() {
         </select>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-          <label style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>From:</label>
-          <input type="date" className="form-input" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: 140, padding: '6px 10px', fontSize: 13 }} />
+          <label style={{ fontSize: 13, color: '#475569', fontWeight: 600, whiteSpace: 'nowrap' }}>From:</label>
+          <input type="date" className="form-input" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: 135, padding: '6px 10px', fontSize: 13 }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <label style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>To:</label>
-          <input type="date" className="form-input" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: 140, padding: '6px 10px', fontSize: 13 }} />
+          <label style={{ fontSize: 13, color: '#475569', fontWeight: 600, whiteSpace: 'nowrap' }}>To:</label>
+          <input type="date" className="form-input" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: 135, padding: '6px 10px', fontSize: 13 }} />
         </div>
-        <button className="btn btn-primary btn-sm" onClick={handleDownloadExcel} disabled={downloading}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-          {downloading ? '⏳ Exporting...' : '📥 Download Excel'}
-        </button>
+
+        {/* Dedicated Excel Export Options */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary btn-sm" onClick={() => handleDownloadExcel()} disabled={downloading}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', fontWeight: 700 }}>
+            📥 {downloading ? 'Exporting...' : 'Export Excel'}
+          </button>
+          <button className="btn btn-sm" onClick={() => handleDownloadExcel('true')} disabled={downloading}
+            style={{ background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+            ✅ Pass Only (.xlsx)
+          </button>
+          <button className="btn btn-sm" onClick={() => handleDownloadExcel('false')} disabled={downloading}
+            style={{ background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FCA5A5', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+            ❌ Fail Only (.xlsx)
+          </button>
+        </div>
       </div>
 
       {filteredEvaluations.length === 0 ? (
@@ -210,8 +227,28 @@ export default function ResultsPage() {
                     </span>
                   </td>
                   <td>{ev.passed ? <span className="badge badge-pass">PASS</span> : <span className="badge badge-fail">FAIL</span>}</td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{ev.evaluated_at ? new Date(ev.evaluated_at).toLocaleDateString() : ''}</td>
-                  <td><button className="btn btn-sm btn-secondary" onClick={e => { e.stopPropagation(); navigate(`/results/${ev.id}`); }}>Details →</button></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        style={{ background: '#E0E7FF', color: '#3730A3', border: '1px solid #C7D2FE', fontWeight: 700 }}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await api.downloadReportPdf(ev.id, ev.student_name);
+                          } catch (err) {
+                            alert('Failed to download PDF: ' + err.message);
+                          }
+                        }}
+                        title="Download candidate PDF report"
+                      >
+                        <FaFilePdf size={12} /> PDF
+                      </button>
+                      <button className="btn btn-sm btn-secondary" onClick={e => { e.stopPropagation(); navigate(`/results/${ev.id}`); }}>
+                        Details →
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}

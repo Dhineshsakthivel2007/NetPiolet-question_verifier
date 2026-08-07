@@ -1,5 +1,5 @@
 /* ============================================
-   PacketGrader v2.0 — Light Purple Theme
+   NetPilot v2.0 — Light Purple Theme
    Matching PCDP Portal design
    ============================================ */
 
@@ -11,7 +11,7 @@
   --bg-secondary: #FFFFFF;
   --bg-tertiary: #F0F1F6;
   --bg-card: #FFFFFF;
-  --bg-card-hover: #FAFAFC;
+  --bg-card-hover: Piolet#FAFAFC;
   --bg-card-solid: #FFFFFF;
   --bg-input: #F5F6FA;
   --bg-glass: rgba(255, 255, 255, 0.9);
@@ -196,15 +196,18 @@ a:hover { color: var(--accent-dark); }
 
 /* ============================================ Stat Cards */
 .stat-card {
-  text-align: center;
   padding: 28px 20px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  transition: all var(--transition);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: var(--shadow-card);
 }
-.stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-glow); border-color: var(--accent); }
+.stat-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 14px 34px rgba(124, 92, 252, 0.2);
+  border-color: var(--accent);
+}
 .stat-icon { font-size: 28px; margin-bottom: 10px; display: block; }
 .stat-value {
   font-size: 32px; font-weight: 900; line-height: 1;
@@ -217,24 +220,55 @@ a:hover { color: var(--accent-dark); }
   display: inline-flex; align-items: center; gap: 8px;
   padding: 9px 18px; border-radius: var(--radius-md);
   font-weight: 600; font-size: 14px;
-  cursor: pointer; transition: all var(--transition);
+  cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   border: 1px solid transparent;
   font-family: var(--font);
+  user-select: none;
 }
+.btn:active { transform: scale(0.97) !important; }
+
 .btn-primary {
   background: var(--accent-gradient); color: white; border: none;
-  box-shadow: 0 2px 8px rgba(124,92,252,0.25);
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.25);
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(124,92,252,0.35); }
-.btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); }
-.btn-secondary:hover { background: var(--border); border-color: var(--border-hover); }
-.btn-danger { background: var(--danger); color: white; }
-.btn-danger:hover { background: #DC2626; }
-.btn-success { background: var(--success); color: white; }
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 25px rgba(124, 92, 252, 0.45);
+  filter: brightness(1.06);
+}
+
+.btn-secondary {
+  background: #FFFFFF; color: var(--text-primary); border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.btn-secondary:hover {
+  background: #F8FAFC; border-color: #7C5CFC; color: #7C5CFC;
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 14px rgba(124, 92, 252, 0.12);
+}
+
+.btn-danger {
+  background: #EF4444; color: white; border: none;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+}
+.btn-danger:hover {
+  background: #DC2626; transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 22px rgba(239, 68, 68, 0.4);
+}
+
+.btn-success {
+  background: var(--success); color: white; border: none;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+}
+.btn-success:hover {
+  background: #059669; transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 22px rgba(16, 185, 129, 0.4);
+}
+
 .btn-sm { padding: 5px 12px; font-size: 13px; }
 .btn-lg { padding: 12px 24px; font-size: 15px; border-radius: var(--radius-lg); }
 .btn-icon { padding: 8px; border-radius: var(--radius-md); min-width: 34px; justify-content: center; }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; box-shadow: none !important; filter: none !important; }
 
 /* Custom Google Button */
 .btn-google {

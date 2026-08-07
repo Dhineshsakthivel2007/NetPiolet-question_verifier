@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api.js';
-import { FaHistory, FaSearch, FaSync, FaUser, FaKey, FaFlask, FaTrash, FaPlus, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
+import { FaHistory, FaSearch, FaSync, FaUser, FaKey, FaLaptopCode, FaTrash, FaPlus, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
 
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState([]);
@@ -36,7 +36,7 @@ export default function AuditLogsPage() {
       return <span className="badge" style={{ background: '#ECFDF5', color: '#10B981', border: '1px solid #A7F3D0', display: 'inline-flex', alignItems: 'center', gap: 4 }}><FaPlus size={11} /> CREATED</span>;
     }
     if (act.includes('SUBMITTED') || act.includes('EVALUATED')) {
-      return <span className="badge" style={{ background: '#F0F9FF', color: '#0EA5E9', border: '1px solid #BAE6FD', display: 'inline-flex', alignItems: 'center', gap: 4 }}><FaFlask size={11} /> LAB SUBMIT</span>;
+      return <span className="badge" style={{ background: '#F0F9FF', color: '#0EA5E9', border: '1px solid #BAE6FD', display: 'inline-flex', alignItems: 'center', gap: 4 }}><FaLaptopCode size={11} /> LAB SUBMIT</span>;
     }
     return <span className="badge" style={{ background: '#F8FAFC', color: '#475569', border: '1px solid #CBD5E1' }}>{action}</span>;
   };

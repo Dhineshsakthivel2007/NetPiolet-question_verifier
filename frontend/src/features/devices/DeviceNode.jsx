@@ -100,8 +100,7 @@ function CiscoRouter3DIcon({ selected }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   3. 3D Isometric PC / Server Tower Component (Exact Match to User Reference Image 2)
-   Cyan 3D Tower Box with disc slot, vents, and power button
+   3. 3D Isometric PC Tower Component
    ═══════════════════════════════════════════════════════════════ */
 function CiscoPC3DIcon({ selected }) {
   return (
@@ -136,13 +135,66 @@ function CiscoPC3DIcon({ selected }) {
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   4. 3D Isometric Cisco Server-PT Tower Component (Packet Tracer Match)
+   Teal 3D Rack Tower with top display window slot
+   ═══════════════════════════════════════════════════════════════ */
+function CiscoServer3DIcon({ selected }) {
+  return (
+    <div style={{
+      width: 44, height: 50, position: 'relative', margin: '0 auto',
+      filter: selected
+        ? 'drop-shadow(0 0 8px rgba(56, 197, 248, 0.95)) drop-shadow(0 4px 10px rgba(0,0,0,0.2))'
+        : 'drop-shadow(0 3px 6px rgba(0,0,0,0.18))',
+      transform: selected ? 'scale(1.05)' : 'scale(1)',
+      transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+    }}>
+      <svg width="44" height="50" viewBox="0 0 80 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+        {/* Front Face (Light Teal Gradient) */}
+        <polygon points="10,24 50,24 50,92 10,92" fill="url(#serverFrontGrad)" />
+        {/* Right Side Face (Dark Teal Shadow Side) */}
+        <polygon points="50,24 74,10 74,78 50,92" fill="#155E75" />
+        {/* Top Face (Top Cap) */}
+        <polygon points="10,24 34,10 74,10 50,24" fill="#67E8F9" />
+        <polygon points="10,24 34,10 74,10 50,24" stroke="#A5F3FC" strokeWidth="1" strokeOpacity="0.7" fill="none" />
+
+        {/* Server Top Display Slot Window (Packet Tracer Server-PT Characteristic Window) */}
+        <rect x="16" y="32" width="24" height="7" fill="#A5F3FC" rx="1.5" opacity="0.9" />
+        <line x1="18" y1="35.5" x2="34" y2="35.5" stroke="#0891B2" strokeWidth="1.2" strokeLinecap="round" />
+
+        {/* Server Drive Bays / Slots */}
+        <rect x="14" y="46" width="28" height="3" fill="#0E7490" rx="0.5" opacity="0.6" />
+        <rect x="14" y="52" width="28" height="3" fill="#0E7490" rx="0.5" opacity="0.6" />
+        <rect x="14" y="58" width="28" height="3" fill="#0E7490" rx="0.5" opacity="0.6" />
+        <rect x="14" y="64" width="28" height="3" fill="#0E7490" rx="0.5" opacity="0.6" />
+
+        {/* LED Activity Indicators */}
+        <circle cx="16" cy="76" r="1.8" fill="#A7F3D0" />
+        <circle cx="22" cy="76" r="1.8" fill="#FDE68A" />
+        <circle cx="28" cy="76" r="1.8" fill="#67E8F9" />
+
+        {/* Bottom Air Vent Lines */}
+        <line x1="14" y1="84" x2="38" y2="84" stroke="#0891B2" strokeWidth="1" opacity="0.5" />
+        <line x1="14" y1="87" x2="38" y2="87" stroke="#0891B2" strokeWidth="1" opacity="0.5" />
+
+        <defs>
+          <linearGradient id="serverFrontGrad" x1="10" y1="24" x2="50" y2="92" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#38BDF8" />
+            <stop offset="1" stopColor="#0891B2" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
 /* Helper to render matching 3D icon */
 function DeviceIcon({ type, selected }) {
   switch (type) {
     case 'switch': return <CiscoSwitch3DIcon selected={selected} />;
     case 'router': return <CiscoRouter3DIcon selected={selected} />;
-    case 'pc':
-    case 'server': return <CiscoPC3DIcon selected={selected} />;
+    case 'pc': return <CiscoPC3DIcon selected={selected} />;
+    case 'server': return <CiscoServer3DIcon selected={selected} />;
     default: return <CiscoPC3DIcon selected={selected} />;
   }
 }
@@ -232,22 +284,22 @@ const DeviceNode = memo(({ id, data, selected }) => {
       {/* 3D Isometric Device Icon */}
       <DeviceIcon type={data.type} selected={selected} />
 
-      {/* Hostname Label */}
+      {/* Hostname & Model Labels (Packet Tracer Style) */}
       <div style={{
         fontSize: 8.5, fontWeight: 800, color: '#0F172A',
         marginTop: 1, textAlign: 'center',
         textShadow: '0 1px 2px rgba(255,255,255,0.95)',
-        background: selected ? '#E0F2FE' : 'rgba(255,255,255,0.7)',
-        border: selected ? '1px solid #7DD3FC' : '1px solid rgba(226,232,240,0.6)',
-        padding: '0 4px', borderRadius: 3,
+        background: selected ? '#E0F2FE' : 'rgba(255,255,255,0.85)',
+        border: selected ? '1px solid #7DD3FC' : '1px solid rgba(226,232,240,0.8)',
+        padding: '1px 5px', borderRadius: 4,
         transition: 'all 0.2s ease',
-        lineHeight: 1.2,
-        maxWidth: 70,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        lineHeight: 1.25,
+        maxWidth: 80,
       }}>
-        {data.hostname}
+        <div style={{ fontSize: 7.5, color: '#475569', fontWeight: 700 }}>
+          {data.model || (data.type === 'server' ? 'Server-PT' : data.type === 'pc' ? 'PC-PT' : data.type === 'router' ? 'Router-PT' : 'Switch-PT')}
+        </div>
+        <div>{data.hostname}</div>
       </div>
 
       {/* Port Indicator */}

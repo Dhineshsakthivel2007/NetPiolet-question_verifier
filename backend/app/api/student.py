@@ -24,27 +24,89 @@ from app.services import evaluation_service
 router = APIRouter(prefix="/student", tags=["Student Portal"])
 
 
+def _parse_slot_times(slot_str: str, base_date: datetime) -> tuple[datetime | None, datetime | None]:
+    """Parse slot string into start & end datetimes, supporting 12h AM/PM and 24h formats."""
+    if not slot_str or not slot_str.strip():
+        return None, None
+
+    clean = slot_str.strip().lower()
+
+    # Check for explicit date in slot string
+    date_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})', clean)
+    target_date = base_date.date()
+    if date_match:
+        try:
+            raw_d = date_match.group(1).replace('/', '-')
+            parts = raw_d.split('-')
+            if len(parts[0]) == 4:
+                target_date = datetime(int(parts[0]), int(parts[1]), int(parts[2])).date()
+            else:
+                target_date = datetime(int(parts[2]), int(parts[1]), int(parts[0])).date()
+        except Exception:
+            pass
+
+    match = re.search(r'(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*[-–—to]+\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?', clean)
+    if not match:
+        return None, None
+
+    try:
+        h1 = int(match.group(1))
+        m1 = int(match.group(2) or 0)
+        p1 = match.group(3)
+
+        h2 = int(match.group(4))
+        m2 = int(match.group(5) or 0)
+        p2 = match.group(6)
+
+        if p1 == 'pm' and h1 < 12:
+            h1 += 12
+        if p1 == 'am' and h1 == 12:
+            h1 = 0
+
+        if p2 == 'pm' and h2 < 12:
+            h2 += 12
+        if p2 == 'am' and h2 == 12:
+            h2 = 0
+
+        if p2 and not p1:
+            if p2 == 'pm' and h1 < 12 and h1 < h2:
+                h1 += 12
+            if p2 == 'am' and h1 == 12:
+                h1 = 0
+
+        if h2 < h1 and h2 < 12:
+            h2 += 12
+
+        start_dt = datetime.combine(target_date, datetime.min.time()).replace(hour=h1, minute=m1, tzinfo=timezone.utc)
+        end_dt = datetime.combine(target_date, datetime.min.time()).replace(hour=h2, minute=m2, tzinfo=timezone.utc)
+
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+
+        return start_dt, end_dt
+    except Exception:
+        return None, None
+
+
 def _calculate_session_expiry(user: User | None, question: Question, now: datetime) -> datetime:
-    """Calculate expiration time based on assigned slot duration and question time limit."""
-    slot_duration_mins = None
-
+    """Calculate expiration time.
+    If student has an assigned slot (e.g. '09:00 AM - 11:00 AM'), the session expires at the slot's end time.
+    If student joins late, the wasted minutes are subtracted automatically!
+    """
     if user and getattr(user, 'session_slot', None) and user.session_slot.strip():
-        match = re.search(r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', user.session_slot.strip())
-        if match:
-            try:
-                t1 = datetime.strptime(match.group(1), "%H:%M")
-                t2 = datetime.strptime(match.group(2), "%H:%M")
-                if t2 <= t1:
-                    t2 += timedelta(days=1)
-                slot_duration_mins = int((t2 - t1).total_seconds() / 60)
-            except Exception:
-                pass
+        start_dt, end_dt = _parse_slot_times(user.session_slot, now)
+        if end_dt:
+            if end_dt > now:
+                q_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 0
+                if q_mins > 0:
+                    q_expiry = now + timedelta(minutes=q_mins)
+                    return min(q_expiry, end_dt)
+                return end_dt
+            else:
+                return now
 
-    q_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 0
-    s_mins = slot_duration_mins if (slot_duration_mins and slot_duration_mins > 0) else 0
-
-    limit_mins = q_mins if q_mins > 0 else (s_mins if s_mins > 0 else 60)
-    return now + timedelta(minutes=limit_mins)
+    q_mins = question.time_limit_minutes if (question.time_limit_minutes and question.time_limit_minutes > 0) else 60
+    return now + timedelta(minutes=q_mins)
 
 
 def _require_student(user: User = Depends(get_current_user)) -> User:
@@ -103,15 +165,8 @@ def start_test(question_id: str, db: Session = Depends(get_db), user: User = Dep
     now = datetime.now(timezone.utc)
 
     if existing:
-        # Check if expired or update expiry if slot duration increased
+        # Return existing session; preserve admin time extensions
         if not existing.is_completed:
-            start_base = _make_utc(existing.started_at) or now
-            new_expiry = _calculate_session_expiry(user, question, start_base)
-            if existing.expires_at != new_expiry:
-                existing.expires_at = new_expiry
-                db.commit()
-                db.refresh(existing)
-
             exp = _make_utc(existing.expires_at)
             if exp and now > exp:
                 existing.is_completed = True

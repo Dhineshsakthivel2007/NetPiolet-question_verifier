@@ -65,8 +65,8 @@ export default function Layout() {
         style={{ width: sidebarOpen ? 220 : 68 }}
       >
         <div className="sidebar-logo">
-          <div className="logo-icon">PG</div>
-          {sidebarOpen && <h1 style={{ opacity: 1, width: 'auto', display: 'block' }}>PacketGrader</h1>}
+          <div className="logo-icon">NP</div>
+          {sidebarOpen && <h1 style={{ opacity: 1, width: 'auto', display: 'block' }}>NetPilot</h1>}
         </div>
         <nav className="sidebar-nav">
           {navItems.map(item => (

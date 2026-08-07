@@ -478,6 +478,7 @@ const useProjectStore = create((set, get) => ({
       type: isNote ? 'note' : 'device',
       position,
       draggable: true,
+      style: isNote ? { width: 130, height: 40 } : undefined,
       data: { ...defaults, id, hostname: isNote ? 'Note' : hostname, running_config: { ...defaults.running_config, hostname: isNote ? 'Note' : hostname } },
     };
     set(s => ({ nodes: [...s.nodes, node] }));
@@ -497,9 +498,17 @@ const useProjectStore = create((set, get) => ({
 
   updateDeviceConfig: (deviceId, updates) => {
     set(s => ({
-      nodes: s.nodes.map(n =>
-        n.id === deviceId ? { ...n, data: { ...n.data, ...updates } } : n
-      ),
+      nodes: s.nodes.map(n => {
+        if (n.id !== deviceId) return n;
+        const newStyle = { ...n.style };
+        if (updates.width) newStyle.width = updates.width;
+        if (updates.height) newStyle.height = updates.height;
+        return {
+          ...n,
+          style: newStyle,
+          data: { ...n.data, ...updates },
+        };
+      }),
     }));
     get()._autoSave();
   },

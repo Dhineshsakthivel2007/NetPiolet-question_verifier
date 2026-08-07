@@ -63,11 +63,12 @@ def export_evaluations_excel(
     from_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
     to_date: str | None = Query(None, description="End date YYYY-MM-DD"),
     question_id: str | None = Query(None, description="Filter by question ID"),
-    passed: bool | None = Query(None, description="Filter by pass/fail status"),
+    passed: str | None = Query(None, description="Filter by pass/fail status: 'true', 'false', 'all'"),
+    session_slot: str | None = Query(None, description="Filter by slot timing"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Export evaluations as Excel file with summary + detailed per-check breakdown."""
+    """Export evaluations as Excel file with summary, passed-only, failed-only, and detailed breakdown."""
     from app.models.evaluation import Evaluation
     from app.models.question import Question
     from app.models.user import UserRole
@@ -81,6 +82,8 @@ def export_evaluations_excel(
     # Filters
     if question_id:
         query = query.filter(Evaluation.question_id == question_id)
+    if session_slot and session_slot.strip():
+        query = query.filter(Evaluation.session_slot == session_slot.strip())
     if from_date:
         try:
             start = datetime.strptime(from_date, "%Y-%m-%d")
@@ -98,16 +101,18 @@ def export_evaluations_excel(
 
     # Deduplicate: Keep only final/latest result per candidate per question
     seen = set()
-    evals = []
+    all_evals = []
     for ev in raw_evals:
         key = (ev.student_id or ev.student_name or ev.created_by or "anon", ev.question_id)
         if key not in seen:
             seen.add(key)
-            evals.append(ev)
+            all_evals.append(ev)
 
-    # Apply Pass/Fail filter to final results
-    if passed is not None:
-        evals = [ev for ev in evals if ev.passed == passed]
+    # Filter based on passed param if specified
+    evals = all_evals
+    if passed is not None and str(passed).strip().lower() not in ('all', '', 'none'):
+        is_pass = str(passed).strip().lower() in ('true', '1', 'passed', 'pass')
+        evals = [ev for ev in all_evals if ev.passed == is_pass]
 
     # Build Excel
     try:
@@ -118,76 +123,94 @@ def export_evaluations_excel(
 
     wb = Workbook()
 
-    # ──────────────────────────────────────────────
-    # SHEET 1: Summary
-    # ──────────────────────────────────────────────
-    ws = wb.active
-    ws.title = "Summary"
-
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="7C5CFC", end_color="7C5CFC", fill_type="solid")
+    pass_header_fill = PatternFill(start_color="059669", end_color="059669", fill_type="solid")
+    fail_header_fill = PatternFill(start_color="DC2626", end_color="DC2626", fill_type="solid")
+
     thin_border = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin"),
     )
-
-    headers = ["#", "Roll Number", "Student Name", "Student ID", "Slot Timing", "Question", "Topic", "Score", "Max Score",
-               "Percentage", "Checks Passed", "Checks Failed", "Status", "Date", "Time"]
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
-        cell.border = thin_border
-
     pass_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
     fail_fill = PatternFill(start_color="FFEBEE", end_color="FFEBEE", fill_type="solid")
 
-    for i, ev in enumerate(evals, 1):
-        question = db.query(Question).filter(Question.id == ev.question_id).first()
-        q_title = question.title if question else "Unknown"
-        q_topic = question.topic.name if question and question.topic else "Unknown"
-        pct = (ev.overall_score / ev.max_score * 100) if ev.max_score > 0 else 0
-        dt = ev.evaluated_at
+    headers = ["#", "Roll Number", "Student Name", "Student ID", "Slot Timing", "Question", "Topic", "Score", "Max Score",
+               "Percentage", "Checks Passed", "Checks Failed", "Status", "Date", "Time"]
 
-        # Extract check results
-        raw = ev.results or {}
-        checks = raw if isinstance(raw, list) else raw.get("check_results", [])
-        passed_count = sum(1 for c in checks if c.get("passed"))
-        failed_count = len(checks) - passed_count
-
-        row_data = [
-            i,
-            getattr(ev, 'roll_number', None) or "—",
-            ev.student_name or "",
-            ev.student_id or "",
-            getattr(ev, 'session_slot', None) or "—",
-            q_title,
-            q_topic,
-            round(ev.overall_score, 1),
-            round(ev.max_score, 1),
-            f"{pct:.1f}%",
-            f"{passed_count}/{len(checks)}",
-            str(failed_count),
-            "PASSED" if ev.passed else "FAILED",
-            dt.strftime("%Y-%m-%d") if dt else "",
-            dt.strftime("%H:%M:%S") if dt else "",
-        ]
-        row_fill = pass_fill if ev.passed else fail_fill
-        for col, val in enumerate(row_data, 1):
-            cell = ws.cell(row=i + 1, column=col, value=val)
+    def fill_summary_sheet(ws, items, title_fill):
+        for col, h in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=h)
+            cell.font = header_font
+            cell.fill = title_fill
+            cell.alignment = Alignment(horizontal="center")
             cell.border = thin_border
-            cell.fill = row_fill
-            cell.alignment = Alignment(horizontal="center") if col != 2 else Alignment(horizontal="left")
 
-    for col in ws.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = min(max_length + 3, 35)
+        for i, ev in enumerate(items, 1):
+            question = db.query(Question).filter(Question.id == ev.question_id).first()
+            q_title = question.title if question else "Unknown"
+            q_topic = question.topic.name if question and question.topic else "Unknown"
+            pct = (ev.overall_score / ev.max_score * 100) if ev.max_score > 0 else 0
+            dt = ev.evaluated_at
+
+            raw = ev.results or {}
+            checks = raw if isinstance(raw, list) else raw.get("check_results", [])
+            passed_count = sum(1 for c in checks if c.get("passed"))
+            failed_count = len(checks) - passed_count
+
+            row_data = [
+                i,
+                getattr(ev, 'roll_number', None) or "—",
+                ev.student_name or "",
+                ev.student_id or "",
+                getattr(ev, 'session_slot', None) or "—",
+                q_title,
+                q_topic,
+                round(ev.overall_score, 1),
+                round(ev.max_score, 1),
+                f"{pct:.1f}%",
+                f"{passed_count}/{len(checks)}",
+                str(failed_count),
+                "PASSED" if ev.passed else "FAILED",
+                dt.strftime("%Y-%m-%d") if dt else "",
+                dt.strftime("%H:%M:%S") if dt else "",
+            ]
+            row_fill = pass_fill if ev.passed else fail_fill
+            for col, val in enumerate(row_data, 1):
+                cell = ws.cell(row=i + 1, column=col, value=val)
+                cell.border = thin_border
+                cell.fill = row_fill
+                cell.alignment = Alignment(horizontal="center") if col != 3 else Alignment(horizontal="left")
+
+        for col in ws.columns:
+            max_length = max(len(str(cell.value or "")) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max_length + 3, 35)
 
     # ──────────────────────────────────────────────
-    # SHEET 2: Detailed Check Results
+    # SHEET 1: Primary Summary Sheet
     # ──────────────────────────────────────────────
-    ws2 = wb.create_sheet("Detailed Results")
+    ws1 = wb.active
+    ws1.title = "Summary"
+    fill_summary_sheet(ws1, evals, header_fill)
+
+    # ──────────────────────────────────────────────
+    # SHEET 2: Passed Students Only
+    # ──────────────────────────────────────────────
+    passed_items = [ev for ev in all_evals if ev.passed]
+    ws_pass = wb.create_sheet("Passed Persons Only")
+    fill_summary_sheet(ws_pass, passed_items, pass_header_fill)
+
+    # ──────────────────────────────────────────────
+    # SHEET 3: Failed Students Only
+    # ──────────────────────────────────────────────
+    failed_items = [ev for ev in all_evals if not ev.passed]
+    ws_fail = wb.create_sheet("Failed Persons Only")
+    fill_summary_sheet(ws_fail, failed_items, fail_header_fill)
+
+    # ──────────────────────────────────────────────
+    # SHEET 4: Detailed Per-Check Breakdown
+    # ──────────────────────────────────────────────
+    ws2 = wb.create_sheet("Detailed Check Results")
 
     detail_headers = ["#", "Student Name", "Student ID", "Question", "Check #", "Check Type",
                       "Description", "Status", "Score", "Message", "Expected", "Found"]

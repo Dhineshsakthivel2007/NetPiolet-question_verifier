@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
+import { FaCheck, FaArrowRight, FaClock, FaCloudUploadAlt, FaTrashAlt, FaCheckCircle, FaExclamationTriangle } from 'react-icons/fa';
 
 
 const EXAM_RULES = [
@@ -275,50 +276,70 @@ export default function StudentTestPage() {
       <>
         {/* Hidden file input at top level — NOT inside the fixed div prevents fullscreen exit */}
         <input ref={fileInputRef} type="file" accept=".pkt,.pka,.xml"
-          style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0 }}
-          onChange={onFileChange} />
-
-        {/* Fullscreen overlay */}
-        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: '#F5F6FA', overflow: 'auto', padding: 16 }}>
-          {/* Top Bar */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 18px', marginBottom: 14, background: 'white', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <span className="badge badge-topic">{question.topic_name}</span>
-              <strong style={{ fontSize: 16 }}>{question.title}</strong>
+          style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0 }} />
+        {sessionLocked && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div style={{ maxWidth: 460, width: '100%', background: '#FFFFFF', borderRadius: 20, padding: 32, textAlign: 'center', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.35)', border: '1px solid #FCA5A5' }}>
+              <div style={{ width: 64, height: 64, background: '#FEE2E2', color: '#DC2626', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <FaShieldAlt size={32} />
+              </div>
+              <h2 style={{ fontSize: 22, fontWeight: 900, color: '#991B1B', margin: '0 0 8px' }}>Test Session Locked</h2>
+              <p style={{ fontSize: 14, color: '#475569', margin: '0 0 20px', lineHeight: 1.5 }}>
+                Your exam session has been locked due to multiple proctor security violations (exiting full screen / switching windows / shortcuts).
+              </p>
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: 12, fontSize: 13, color: '#991B1B', fontWeight: 700 }}>
+                Please notify your invigilator or administrator to unlock your test session.
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div className={`timer-display ${timerCls}`} style={{ padding: '6px 18px', fontSize: 20, borderWidth: 2 }}>⏱ {fmt(timeLeft)}</div>
-              <span style={{ fontSize: 14, color: '#9CA3AF' }}>Attempt {attUsed}/{maxAttempts}</span>
-              <button className="btn btn-sm btn-danger" onClick={endTest}>End Test</button>
+          </div>
+        )}
+
+        <div style={{ animation: 'fadeIn 0.3s ease' }}>
+          {/* Header Bar */}
+          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '16px 24px', marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <span className="badge badge-primary" style={{ marginBottom: 4 }}>{question?.topic_name || 'Networking'}</span>
+              <h2 style={{ fontSize: 20, fontWeight: 800, margin: '2px 0 0' }}>{question?.title}</h2>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {warningCount > 0 && (
+                <div style={{ background: warningCount >= 2 ? '#FEF2F2' : '#FFFBEB', border: `1px solid ${warningCount >= 2 ? '#FCA5A5' : '#FDE68A'}`, color: warningCount >= 2 ? '#DC2626' : '#D97706', padding: '6px 14px', borderRadius: 100, fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <FaExclamationTriangle /> Warning: {warningCount}/3
+                </div>
+              )}
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: '#6B7280', textTransform: 'uppercase', fontWeight: 600 }}>Attempts</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: attemptsLeft > 0 ? '#10B981' : '#EF4444' }}>
+                  {attemptsLeft} left
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Two Column */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: 16, alignItems: 'start', height: 'calc(100vh - 90px)' }}>
-
-            {/* LEFT: Question */}
-            <div style={{ background: 'white', border: '1px solid #E5E7EB', borderRadius: 14, padding: 24, height: '100%', overflow: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <h3 style={{ fontSize: 17, fontWeight: 700 }}>📖 Question</h3>
-                <button className="btn btn-sm btn-secondary" onClick={copyQuestion}>
-                  {copied ? '✅ Copied!' : '📋 Copy'}
-                </button>
-              </div>
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: 2, padding: '18px 20px', background: '#F5F6FA', borderRadius: 12, userSelect: 'text' }}>
-                {question.question_text}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+            {/* Left: Question Description */}
+            <div style={{ background: 'white', border: '1px solid #E5E7EB', borderRadius: 14, padding: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, borderBottom: '1px solid #F3F4F6', paddingBottom: 8 }}>
+                Problem Statement
+              </h3>
+              <div style={{ fontSize: 14, lineHeight: 1.7, color: '#374151', whiteSpace: 'pre-wrap' }}>
+                {question?.question_text}
               </div>
             </div>
 
-            {/* RIGHT: Upload + Test Cases */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, height: '100%', overflow: 'auto' }}>
-              {/* Upload */}
-              <div style={{ background: 'white', border: '1px solid #E5E7EB', borderRadius: 14, padding: 20 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>📤 Upload .pkt File</h3>
+            {/* Right: Upload & Submit */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {/* Dropzone */}
+              <div style={{ background: 'white', border: '1px solid #E5E7EB', borderRadius: 14, padding: 24 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>Submit Solution</h3>
+
+                <input type="file" ref={fileInputRef} accept=".pkt,.pkz" style={{ display: 'none' }} onChange={handleFileChange} />
+
                 <div style={{ border: `2px dashed ${hasFile ? '#7C5CFC' : '#E5E7EB'}`, borderRadius: 12, padding: 24, textAlign: 'center', cursor: 'pointer', background: hasFile ? 'rgba(124,92,252,0.06)' : '#F5F6FA', transition: 'all 0.2s' }}
-                  onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
-                  onDrop={onDrop}
-                  onClick={() => fileInputRef.current?.click()}>
-                  <div style={{ fontSize: 36, marginBottom: 6 }}>{hasFile ? '📄' : '📤'}</div>
+                  onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onClick={() => fileInputRef.current?.click()}>
+                  <div style={{ fontSize: 36, marginBottom: 6, color: '#7C5CFC', display: 'flex', justifyContent: 'center' }}>
+                    {hasFile ? <FaFileAlt /> : <FaCloudUploadAlt />}
+                  </div>
                   <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>{hasFile ? fileName : 'Drop .pkt file here'}</p>
                   <p style={{ fontSize: 13, color: '#9CA3AF' }}>{hasFile ? `${(file.size/1024).toFixed(1)} KB` : 'or click to browse'}</p>
                 </div>
@@ -326,73 +347,51 @@ export default function StudentTestPage() {
                 {error && <div style={{ marginTop: 10, padding: '10px 14px', background: '#FEF2F2', borderRadius: 10, color: '#EF4444', fontSize: 14 }}>{error}</div>}
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                  <button className="btn btn-primary" style={{ flex: 1, fontSize: 15, padding: '12px 16px' }}
+                  <button className="btn btn-primary" style={{ flex: 1, fontSize: 15, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                     disabled={!canSubmit} onClick={doSubmit}>
-                    {submitting ? '⏳ Evaluating...' : '🚀 Submit'}
+                    {submitting ? <><FaClock /> Evaluating...</> : <><FaPaperPlane /> Submit Solution</>}
                   </button>
-                  <button className="btn btn-secondary" style={{ fontSize: 14 }} disabled={!hasFile} onClick={doClear}>🗑 Clear</button>
+                  <button className="btn btn-secondary" style={{ fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }} disabled={!hasFile} onClick={doClear}>
+                    <FaTrash /> Clear
+                  </button>
                 </div>
               </div>
 
               {/* Hidden Test Cases */}
               <div style={{ background: 'white', border: '1px solid #E5E7EB', borderRadius: 14, padding: 20, flex: 1 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>🧪 Hidden Test Cases</h3>
+                <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FaShieldAlt style={{ color: '#059669' }} /> Automated Verification Checks
+                </h3>
 
                 {result ? (
                   <>
                     {/* Score */}
                     <div style={{ textAlign: 'center', marginBottom: 14 }}>
-                      <div style={{ width: 70, height: 70, borderRadius: '50%', margin: '0 auto 8px', border: `3px solid ${result.passed ? '#10B981' : '#EF4444'}`, background: result.passed ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                        <span style={{ fontSize: 22, fontWeight: 900, color: result.passed ? '#10B981' : '#EF4444' }}>{result.score?.toFixed(0)}</span>
-                        <span style={{ fontSize: 10, color: '#9CA3AF' }}>/{result.max_score}</span>
+                      <div style={{ width: 80, height: 80, borderRadius: '50%', margin: '0 auto 8px', border: `4px solid ${result.passed ? '#10B981' : '#EF4444'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                        <span style={{ fontSize: 24, fontWeight: 900, color: result.passed ? '#10B981' : '#EF4444' }}>{result.score?.toFixed(0)}</span>
                       </div>
-                      <span className={`badge ${result.passed ? 'badge-pass' : 'badge-fail'}`} style={{ fontSize: 12, padding: '4px 14px' }}>
-                        {result.passed ? '✓ PASSED' : '✗ FAILED'}
+                      <span className={`badge ${result.passed ? 'badge-success' : 'badge-danger'}`}>
+                        {result.passed ? <><FaCheckCircle /> PASSED</> : <><FaTimesCircle /> FAILED</>}
                       </span>
                     </div>
 
-                    {/* Progress */}
                     <div style={{ marginBottom: 14 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}>
                         <span>Passed</span>
                         <strong style={{ color: result.passed ? '#10B981' : '#EF4444' }}>{result.passed_count}/{result.check_count}</strong>
                       </div>
-                      <div style={{ background: '#F0F1F6', borderRadius: 100, height: 8, overflow: 'hidden' }}>
+                      <div style={{ background: '#F3F4F6', borderRadius: 100, height: 6, overflow: 'hidden' }}>
                         <div style={{ width: `${result.check_count > 0 ? (result.passed_count/result.check_count)*100 : 0}%`, height: '100%', borderRadius: 100, transition: 'width 0.6s', background: result.passed ? '#10B981' : '#7C5CFC' }} />
                       </div>
                     </div>
-
-                    {/* Individual test cases */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {Array.from({ length: result.check_count }).map((_, i) => {
-                        const ok = i < result.passed_count;
-                        return (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: ok ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)', border: `1px solid ${ok ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
-                            <span style={{ fontSize: 16, fontWeight: 700, color: ok ? '#10B981' : '#EF4444' }}>{ok ? '✓' : '✗'}</span>
-                            <span style={{ fontSize: 14, fontWeight: 500 }}>Hidden Test Case {i + 1}</span>
-                            <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: ok ? '#10B981' : '#EF4444' }}>{ok ? 'Passed' : 'Failed'}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
                   </>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {[1,2,3,4,5].map(i => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: '#F5F6FA', border: '1px solid #E5E7EB' }}>
-                        <span style={{ fontSize: 16, color: '#9CA3AF' }}>○</span>
-                        <span style={{ fontSize: 14, color: '#9CA3AF' }}>Hidden Test Case {i}</span>
-                        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#9CA3AF' }}>Pending</span>
-                      </div>
-                    ))}
-                    <p style={{ fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginTop: 8 }}>Submit your file to run test cases</p>
+                  <div style={{ textAlign: 'center', padding: '30px 0', color: '#9CA3AF' }}>
+                    <div style={{ fontSize: 28, marginBottom: 6 }}><FaShieldAlt /></div>
+                    <p style={{ fontSize: 13, margin: 0 }}>Upload your .pkt file and submit to see evaluation results</p>
                   </div>
                 )}
               </div>
-
-              {session.is_completed && (
-                <button className="btn btn-primary btn-lg" style={{ width: '100%', fontSize: 16 }} onClick={endTest}>✅ Finish Test</button>
-              )}
             </div>
           </div>
         </div>
@@ -405,7 +404,9 @@ export default function StudentTestPage() {
     <div style={{ maxWidth: 640, margin: '40px auto', animation: 'fadeIn 0.4s ease' }}>
       <div className="card" style={{ padding: 40 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 52, marginBottom: 10 }}>📋</div>
+          <div style={{ fontSize: 44, marginBottom: 10, color: '#7C5CFC', display: 'flex', justifyContent: 'center' }}>
+            <FaShieldAlt />
+          </div>
           <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 6 }}>Examination Guidelines</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 15 }}>Read and accept all rules before starting your test</p>
         </div>
@@ -413,8 +414,14 @@ export default function StudentTestPage() {
           {EXAM_RULES.map((rule, idx) => (
             <label key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 0', cursor: 'pointer', userSelect: 'none', borderBottom: idx < EXAM_RULES.length - 1 ? '1px solid var(--border)' : 'none' }}
               onClick={() => toggleRule(idx)}>
-              <div style={{ width: 24, height: 24, minWidth: 24, borderRadius: 6, marginTop: 1, border: checkedRules.includes(idx) ? 'none' : '2px solid #D1D5DB', background: checkedRules.includes(idx) ? '#7C5CFC' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 14, fontWeight: 700, transition: 'all 0.2s' }}>
-                {checkedRules.includes(idx) && '✓'}
+              <div style={{
+                width: 24, height: 24, minWidth: 24, borderRadius: 6, marginTop: 1,
+                border: checkedRules.includes(idx) ? 'none' : '2px solid #D1D5DB',
+                background: checkedRules.includes(idx) ? '#7C5CFC' : 'white',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'white', transition: 'all 0.2s'
+              }}>
+                {checkedRules.includes(idx) && <FaCheck size={12} color="white" />}
               </div>
               <span style={{ fontSize: 15, lineHeight: 1.6, color: checkedRules.includes(idx) ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{rule}</span>
             </label>
@@ -429,12 +436,12 @@ export default function StudentTestPage() {
           </div>
         </div>
         {allRulesChecked ? (
-          <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 20, fontSize: 17, padding: '14px 24px', animation: 'slideUp 0.3s ease', justifyContent: 'center'}}
+          <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 20, fontSize: 17, padding: '14px 24px', animation: 'slideUp 0.3s ease', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={handleStartTest} disabled={loading}>
-            {loading ? '⏳ Loading test...' : '-> Start Test'}
+            {loading ? <><FaClock size={16} /> Loading test...</> : <><FaPlay size={15} /> Start Test</>}
           </button>
         ) : (
-          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-muted)' }}>☝️ Accept all {EXAM_RULES.length} rules to proceed</p>
+          <p style={{ textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-muted)' }}>Accept all {EXAM_RULES.length} rules to proceed</p>
         )}
         {error && <div style={{ marginTop: 14, padding: '12px 16px', background: '#FEF2F2', borderRadius: 10, color: '#EF4444', fontSize: 14, textAlign: 'center' }}>{error}</div>}
       </div>

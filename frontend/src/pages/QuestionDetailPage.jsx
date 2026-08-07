@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api.js';
-import { FaFlask, FaListCheck, FaCode, FaPlus, FaWandMagicSparkles, FaFloppyDisk, FaTrash, FaPenToSquare } from 'react-icons/fa6';
+import { FaNetworkWired, FaCheckDouble, FaListCheck, FaCode, FaPlus, FaWandMagicSparkles, FaFloppyDisk, FaTrash, FaPenToSquare } from 'react-icons/fa6';
 
 export default function QuestionDetailPage() {
   const { id } = useParams();
@@ -80,6 +80,7 @@ export default function QuestionDetailPage() {
 
   const handleTestLab = async () => {
     try {
+      localStorage.setItem('last_admin_question_id', id);
       const proj = await api.createProject(id);
       navigate(`/student/lab/${proj.id}`);
     } catch (err) { alert(err.message); }
@@ -188,7 +189,7 @@ export default function QuestionDetailPage() {
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button className="btn btn-primary" onClick={handleTestLab} style={{ fontSize: 14, padding: '8px 16px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <FaFlask /> Test Lab Canvas
+            <FaNetworkWired /> Test Lab Canvas
           </button>
           <button
             className="btn btn-secondary"
@@ -321,7 +322,7 @@ export default function QuestionDetailPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FaFlask style={{ color: '#7C5CFC' }} /> Evaluation Test Cases
+              <FaCheckDouble style={{ color: '#7C5CFC' }} /> Evaluation Test Cases
             </h3>
             {/* View Mode Toggle */}
             <div style={{ display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3 }}>
@@ -375,7 +376,7 @@ export default function QuestionDetailPage() {
           <div>
             {checksList.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '40px 20px', background: '#F9FAFB', borderRadius: 12, border: '2px dashed #E5E7EB' }}>
-                <div style={{ fontSize: 36, marginBottom: 10, color: '#7C5CFC' }}><FaFlask /></div>
+                <div style={{ fontSize: 36, marginBottom: 10, color: '#7C5CFC' }}><FaCheckDouble /></div>
                 <h4 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>No Test Cases Defined</h4>
                 <p style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>Generate evaluation checks with AI or add test cases manually.</p>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>

@@ -33,8 +33,8 @@ export default function StudentLayout() {
             background: 'var(--accent-gradient)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontWeight: 900, fontSize: 14, color: 'white',
-          }}>PG</div>
-          <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>PacketGrader</span>
+          }}>NP</div>
+          <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>NetPilot</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>

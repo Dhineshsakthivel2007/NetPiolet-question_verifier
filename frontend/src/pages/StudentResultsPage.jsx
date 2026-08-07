@@ -52,7 +52,7 @@ export default function StudentResultsPage() {
         <div className="card">
           <table className="data-table">
             <thead>
-              <tr><th>Question</th><th>Score</th><th>Status</th><th>Attempts</th><th>Date</th></tr>
+              <tr><th>Question</th><th>Score</th><th>Status</th><th>Attempts</th><th>Date</th><th>Report</th></tr>
             </thead>
             <tbody>
               {results.map((r, i) => (
@@ -74,6 +74,23 @@ export default function StudentResultsPage() {
                   <td style={{ color: 'var(--text-secondary)' }}>{r.attempts_used}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {r.started_at ? new Date(r.started_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td>
+                    {(r.evaluation_id || r.id) ? (
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, background: '#E0E7FF', color: '#4338CA', border: '1px solid #C7D2FE' }}
+                        onClick={async () => {
+                          try {
+                            await api.downloadReportPdf(r.evaluation_id || r.id, r.question_title || 'my_report');
+                          } catch (err) {
+                            alert('PDF download failed: ' + err.message);
+                          }
+                        }}
+                      >
+                        📄 Download PDF
+                      </button>
+                    ) : '—'}
                   </td>
                 </tr>
               ))}

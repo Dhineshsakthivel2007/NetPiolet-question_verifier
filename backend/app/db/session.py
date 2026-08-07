@@ -76,7 +76,7 @@ def create_tables():
         if not admin_user:
             default_admin = User(
                 username="admin",
-                email="admin@netpiolet.local",
+                email="admin@netpilot.local",
                 hashed_password=hash_password("admin123"),
                 role=UserRole.admin,
                 is_active=True,
