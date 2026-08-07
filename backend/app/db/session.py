@@ -1,8 +1,8 @@
 """Database session management."""
 
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, Session
 from typing import Generator
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 
@@ -13,7 +13,7 @@ if settings.database_url.startswith("sqlite"):
 engine = create_engine(settings.database_url, connect_args=connect_args)
 
 # Enable WAL mode and foreign keys for SQLite
-if settings.database_url.startswith("sqlite"):
+if engine.dialect.name == "sqlite":
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
@@ -39,33 +39,33 @@ def create_tables():
     import app.models  # noqa: F401 — ensure all models are imported
     Base.metadata.create_all(bind=engine)
 
-    # Safe auto-migration for newly added columns in SQLite
-    with engine.connect() as conn:
-        try:
-            from sqlalchemy import text
-            res = conn.execute(text("PRAGMA table_info(test_sessions)")).fetchall()
-            cols = [r[1] for r in res]
-            if "last_violation" not in cols:
-                conn.execute(text("ALTER TABLE test_sessions ADD COLUMN last_violation VARCHAR(255)"))
-                conn.commit()
-        except Exception as e:
-            print("Auto-migration notice:", e)
-
-    # Ensure missing columns are added for SQLite databases
-    if settings.database_url.startswith("sqlite"):
+    # Dialect-specific migrations for SQLite only
+    if engine.dialect.name == "sqlite":
         with engine.connect() as conn:
-            cursor = conn.exec_driver_sql("PRAGMA table_info(users)")
-            cols = [row[1] for row in cursor.fetchall()]
-            if "roll_number" not in cols:
-                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN roll_number VARCHAR(50)")
-            if "session_slot" not in cols:
-                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN session_slot VARCHAR(100)")
-            if "level_id" not in cols:
-                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN level_id VARCHAR(36)")
-            if "attendance" not in cols:
-                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN attendance VARCHAR(20) DEFAULT 'Absent'")
-            # Fix existing NULL attendance rows
-            conn.commit()
+            try:
+                from sqlalchemy import text
+                res = conn.execute(text("PRAGMA table_info(test_sessions)")).fetchall()
+                cols = [r[1] for r in res]
+                if "last_violation" not in cols:
+                    conn.execute(text("ALTER TABLE test_sessions ADD COLUMN last_violation VARCHAR(255)"))
+                    conn.commit()
+            except Exception as e:
+                print("Auto-migration notice:", e)
+
+            try:
+                cursor = conn.exec_driver_sql("PRAGMA table_info(users)")
+                cols = [row[1] for row in cursor.fetchall()]
+                if "roll_number" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN roll_number VARCHAR(50)")
+                if "session_slot" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN session_slot VARCHAR(100)")
+                if "level_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN level_id VARCHAR(36)")
+                if "attendance" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN attendance VARCHAR(20) DEFAULT 'Absent'")
+                conn.commit()
+            except Exception as e:
+                print("SQLite users migration notice:", e)
 
     # Seed initial default admin user if no admin exists
     db = SessionLocal()

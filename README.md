@@ -172,7 +172,7 @@ APP_VERSION="2.0.0"
 DEBUG=False
 
 # Database
-DATABASE_URL="sqlite:///./pteval.db"
+DATABASE_URL="postgresql+psycopg2://username:password@localhost:5432/netpiolet_db"
 
 # JWT Secret
 JWT_SECRET_KEY="your-random-production-secret-key-change-this"

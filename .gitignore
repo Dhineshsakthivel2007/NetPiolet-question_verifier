@@ -12,6 +12,7 @@ dist/
 backend/*.db*
 backend/pteval.db*
 backend/netpiolet_mysql_dump.sql
+backend/netpiolet_postgres_dump.sql
 backend/*.sql
 backend/uploads/*
 !backend/uploads/.gitkeep

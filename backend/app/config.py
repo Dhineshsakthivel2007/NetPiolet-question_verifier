@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database
-    database_url: str = "sqlite:///./pteval.db"
+    database_url: str = "postgresql+psycopg2://username:password@localhost:5432/netpiolet_db"
 
     # JWT Auth
     jwt_secret_key: str = "change-me-in-production-use-a-real-secret"
