@@ -103,21 +103,36 @@ export default function TopicsPage() {
           {topics.map(t => {
             const topicLevel = levels.find(l => l.id === t.level_id);
             return (
-              <div className="card" key={t.id} style={{ transition: 'transform 0.2s, box-shadow 0.2s' }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; }}
+              <div className="card" key={t.id} style={{
+                display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease', padding: 20
+              }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 28px rgba(0,0,0,0.08)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                  <div>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                      <span className="badge badge-topic">{t.slug}</span>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span className="badge badge-topic">{t.slug || t.name}</span>
                       {topicLevel && !selectedLevelId && (
-                        <span className="badge" style={{ background: 'rgba(124,92,252,0.1)', color: '#7C5CFC', fontSize: 11, padding: '2px 8px' }}>{topicLevel.name}</span>
+                        <span className="badge" style={{ background: 'rgba(124,92,252,0.1)', color: '#7C5CFC' }}>
+                          {topicLevel.name}
+                        </span>
                       )}
                     </div>
-                    <h3 style={{ fontSize: 18, marginTop: 4 }}>{t.name}</h3>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>{t.description || 'No description'}</p>
+                    <button className="btn btn-sm"
+                      title="Delete Topic"
+                      style={{
+                        color: '#EF4444', background: 'rgba(239, 68, 68, 0.08)',
+                        border: 'none', borderRadius: '50%', width: 24, height: 24,
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 16, cursor: 'pointer', flexShrink: 0, padding: 0
+                      }}
+                      onClick={() => handleDelete(t.id, t.name)}>×</button>
                   </div>
-                  <button className="btn btn-sm" style={{ color: 'var(--danger)', background: 'none', border: 'none', fontSize: 18, cursor: 'pointer' }} onClick={() => handleDelete(t.id)}>×</button>
+                  <h3 style={{ fontSize: 17, fontWeight: 700, margin: '4px 0 6px 0', color: 'var(--text-primary)' }}>{t.name}</h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.5, margin: 0 }}>
+                    {t.description || 'No description provided'}
+                  </p>
                 </div>
               </div>
             );

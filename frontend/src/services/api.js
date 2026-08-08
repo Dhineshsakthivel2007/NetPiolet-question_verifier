@@ -156,6 +156,21 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(params).filter(([,v]) => v != null)).toString();
     return request(`/audit-logs${qs ? '?' + qs : ''}`);
   },
+  exportAuditLogsCsv: async () => {
+    const res = await fetch(`${API_BASE}/audit-logs/export-csv`, {
+      headers: { ...getAuthHeaders() },
+    });
+    if (!res.ok) throw new Error("Failed to download CSV analytics report");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `NetPiolet_System_Analytics_Report_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 export default api;

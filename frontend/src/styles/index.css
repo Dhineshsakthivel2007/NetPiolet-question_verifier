@@ -186,7 +186,7 @@ a:hover { color: var(--accent-dark); }
   box-shadow: var(--shadow-md);
   border-color: var(--border-hover);
 }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
 
 /* 3D Tilt Card */
 .card-3d:hover {
@@ -467,9 +467,11 @@ a:hover { color: var(--accent-dark); }
 /* ============================================ Badges */
 .badge {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 10px; border-radius: var(--radius-full);
+  padding: 4px 10px; border-radius: var(--radius-full);
   font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.4px;
+  white-space: nowrap; line-height: 1.2;
+  flex-shrink: 0;
 }
 .badge-pass { background: var(--success-bg); color: var(--success); }
 .badge-fail { background: var(--danger-bg); color: var(--danger); }

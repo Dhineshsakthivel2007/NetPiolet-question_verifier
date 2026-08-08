@@ -41,13 +41,40 @@ export default function AuditLogsPage() {
     return <span className="badge" style={{ background: '#F8FAFC', color: '#475569', border: '1px solid #CBD5E1' }}>{action}</span>;
   };
 
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      await api.exportAuditLogsCsv();
+    } catch (err) {
+      alert("Failed to export analytics: " + err.message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
-      <div className="page-header" style={{ marginBottom: 20 }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <FaHistory style={{ color: '#7C5CFC' }} /> Audit Activity Logs
-        </h2>
-        <p>Record of user logins, lab evaluations, question management, and administrative actions.</p>
+      <div className="page-header" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <FaHistory style={{ color: '#7C5CFC' }} /> Audit Activity Logs
+          </h2>
+          <p>Record of user logins, lab evaluations, question management, and administrative actions.</p>
+        </div>
+        <button
+          className="btn btn-primary"
+          onClick={handleExportCsv}
+          disabled={exporting}
+          style={{
+            background: 'linear-gradient(135deg, #7C5CFC 0%, #4F46E5 100%)',
+            boxShadow: '0 4px 14px rgba(124, 92, 252, 0.35)',
+            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', fontWeight: 700
+          }}
+        >
+          {exporting ? 'Generating Report...' : '📥 Export Resume Analytics Report'}
+        </button>
       </div>
 
       {/* Filter Controls */}
@@ -79,9 +106,11 @@ export default function AuditLogsPage() {
             </select>
           </div>
 
-          <button className="btn btn-secondary" onClick={loadLogs} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <FaSync /> Refresh
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-secondary" onClick={loadLogs} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <FaSync /> Refresh
+            </button>
+          </div>
         </div>
       </div>
 
